@@ -1,0 +1,127 @@
+# dj
+
+AI-powered "what to play next" for [Lyrion Music Server](https://lyrion.org) (LMS).
+
+When a player's queue is about to run out, LMS's **Don't Stop The Music** (DSTM) asks the
+`DJ` plugin for more tracks. The plugin asks the **suggestion service**, which picks tracks
+from the LMS library. If the service is slow or down, DSTM falls back to its default
+behaviour and the music keeps playing.
+
+```
+LMS ──DSTM──▶ plugin/ (Perl) ──GET /mix──▶ service/ (Java) ──JSON-RPC──▶ LMS library
+```
+
+Status: **step 1 (skeleton)**. The service returns random tracks from the library;
+similarity, LLM reranking and playback context are stubbed. See `CLAUDE.md` for the
+architecture and roadmap.
+
+## Layout
+
+| Path | What |
+|---|---|
+| `plugin/` | LMS plugin `Plugins::DJ`: registers the DSTM mixer, settings page |
+| `service/` | Java 21 suggestion service (hexagonal: `dj.domain` core, `dj.adapter.*`) |
+| `docker-compose.yml` | Runs the service next to LMS (host networking) |
+
+## Suggestion service
+
+### Build and test
+
+```sh
+cd service
+mvn test        # unit tests
+mvn package     # target/dj-service.jar
+```
+
+### Run
+
+Locally:
+
+```sh
+java -jar service/target/dj-service.jar
+```
+
+Or in Docker (needs access to the Docker daemon, e.g. `sudo` or membership of the `docker` group):
+
+```sh
+docker compose up -d --build
+docker compose logs -f dj
+```
+
+Check it:
+
+```sh
+curl localhost:9010/health
+curl 'localhost:9010/mix?player=b0:3c:dc:72:f2:72&seed=119,131&count=3'
+```
+
+### API
+
+`GET /mix?player=<player id>&seed=<track id,...>&count=<n>`
+
+- `player`: required. The LMS player id (MAC address).
+- `seed`: optional. Library ids of the tracks at the end of the queue. Comma-separated or repeated.
+- `count`: optional, 1–50, default 5.
+
+```json
+{"source":"fallback","tracks":[{"id":"61","url":"tidal://295476141.flc","title":"the slab","artist":"Slowdive","album":"everything is alive"}]}
+```
+
+`source` is `llm` when the LLM chose the order and `fallback` otherwise. Errors return
+`400` for a bad request, `503` if LMS can't be reached, and `{"error": "..."}` as the body.
+
+### Configuration (environment variables)
+
+| Variable | Default | |
+|---|---|---|
+| `LMS_URL` | `http://localhost:9000` | LMS base URL |
+| `DJ_PORT` | `9010` | HTTP port |
+| `DJ_CANDIDATES` | `50` | Candidate pool size offered to the LLM |
+| `DJ_LLM_TIMEOUT_MS` | `3000` | Give up on the LLM after this long |
+| `DJ_LIBRARY_TTL_MINUTES` | `15` | How long the library snapshot is reused |
+
+## LMS plugin
+
+### Install
+
+LMS runs in the `lms` container, which keeps its plugins in
+`/home/lms/config/cache/InstalledPlugins/Plugins` (mounted as `/config/...`). Copy the
+plugin there as `DJ`, owned by the container's user (uid 499), then restart LMS:
+
+```sh
+sudo rsync -a --delete /home/dj/plugin/ /home/lms/config/cache/InstalledPlugins/Plugins/DJ/
+sudo chown -R 499:users /home/lms/config/cache/InstalledPlugins/Plugins/DJ
+sudo docker restart lms
+```
+
+Use the same commands to update the plugin after changing it.
+
+To uninstall, remove that directory and restart LMS (or uninstall it from *Settings → Manage Plugins*).
+
+### Configure
+
+1. *Settings → Manage Plugins*: check that **DJ** and **Don't Stop The Music** are enabled.
+2. *Settings → Advanced → DJ*: set the service URL (default `http://localhost:9010`)
+   and the timeout (default 5 s).
+3. Select the mixer for a player. Either use the UI (*Settings → Player → (choose player) →
+   Don't Stop The Music → "DJ (AI suggestions)"*; in Material Skin it's the player's settings
+   dialog), or the CLI:
+
+   ```sh
+   curl -s localhost:9000/jsonrpc.js -H 'Content-Type: application/json' -d \
+     '{"id":1,"method":"slim.request","params":["b0:3c:dc:72:f2:72",["playerpref","plugin.dontstopthemusic:provider","PLUGIN_DJ_DSTM"]]}'
+   ```
+
+### Verify that the music keeps playing
+
+1. Start the service and confirm `curl localhost:9010/health` answers.
+2. On a player with DJ selected, clear the queue, add **one or two** tracks and press play.
+   Make sure repeat is off. DSTM only acts when fewer than 2 tracks remain and repeat is off.
+3. Within a few seconds the queue gains 5 new tracks, and the service log shows
+   `Mix for <player>: 5 tracks (FALLBACK) in N ms`.
+4. Fallback check: stop the service (`docker compose stop dj`) and let the queue run low
+   again. The plugin logs a warning and DSTM uses its default (RandomPlay), so playback
+   continues.
+
+For more detail in the LMS log (`/home/lms/config/logs/server.log`), set
+*Settings → Advanced → Logging → plugin.dj* to *Info*.

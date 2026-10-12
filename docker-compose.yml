@@ -1,0 +1,12 @@
+services:
+  dj:
+    build: ./service
+    image: dj-service
+    container_name: dj
+    # Same as the lms container: the plugin reaches us on localhost:9010, we reach LMS on localhost:9000.
+    network_mode: host
+    environment:
+      - TZ=Europe/Oslo
+      - LMS_URL=http://localhost:9000
+      - DJ_PORT=9010
+    restart: unless-stopped
