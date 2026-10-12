@@ -103,9 +103,13 @@ service → `http://localhost:9000`).
 - **Step 2 (done):** Last.fm artist similarity + tags cached in SQLite, play-count weighting,
   queue-aware exclusion, recent-artist penalty, artist spreading. Ideas: tune weights from
   real listening; track-level `track.getSimilar`; LMS ratings once used.
-- **"Start DJ" home-page button:** an LMS plugin menu (Material Skin: pin to home screen)
-  that asks the service for a fresh mix, replaces the queue, plays it and sets the player's
-  DSTM mixer to DJ. Also the natural home for step 4 requests and "why this track?".
+- **"Start DJ" button (done):** the plugin is an `OPMLBased` app (`is_app`, tag `dj`); item
+  "Start DJ" (`nextWindow => 'nowPlaying'`) fetches 10 tracks seeded by the current song,
+  runs `randomplay disable`, `playlist playtracks listRef`, and sets the DSTM provider. The
+  user pinned it to the Material Skin home screen. Next: a proper icon; the menu is the
+  natural home for step 4 requests and "why this track?".
+- **Tuning:** artist spreading treats "Devin Townsend Project" and "Devin Townsend Band" as
+  different artists (4 of 10 in one mix). Consider a per-mix artist cap or grouping.
 - **Step 3: LLM reranking.** `OllamaLlm` (local, default) and `ClaudeLlm` (optional, API key
   via env). Prompt with compact candidate lines (id, artist, title, album, year, tags);
   response is a JSON list of IDs + a one-line reason each. Store reasons for "why this track?".
@@ -119,6 +123,8 @@ service → `http://localhost:9000`).
 - Observability: per-candidate score breakdown endpoint for tuning.
 
 ## Gotchas
+- The user's UI is Material Skin (also used on their phone). Its section is "Apps", not
+  "My Apps" (classic UI). Home screen items are per device.
 - `!` commands in Claude Code can't prompt for a sudo password; long commands pasted into a
   terminal can wrap and break. Prefer short commands or scripts.
 - When LMS's own random mix is active on a player (`randomplay: 1` in `status`), DSTM does

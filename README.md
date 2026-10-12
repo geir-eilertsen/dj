@@ -136,6 +136,16 @@ To uninstall, remove that directory and restart LMS (or uninstall it from *Setti
      '{"id":1,"method":"slim.request","params":["b0:3c:dc:72:f2:72",["playerpref","plugin.dontstopthemusic:provider","PLUGIN_DJ_DSTM"]]}'
    ```
 
+### Start DJ button
+
+The plugin also appears as an app: **Apps → DJ → Start DJ** in Material Skin
+(*My Apps* in the classic web UI). One tap asks the service for 10 tracks following the
+current song, switches off LMS's random mix, replaces the queue, starts playing and makes
+DJ the player's Don't Stop The Music mixer, so the music keeps going.
+
+To get a home screen button in Material Skin, long-press **Start DJ** (or use its ⋮ menu)
+and choose *Pin to home screen*.
+
 ### Verify that the music keeps playing
 
 1. Start the service and confirm `curl localhost:9010/health` answers.
