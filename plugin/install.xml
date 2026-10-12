@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+
+<extension>
+	<id>3cabe726-d977-4265-bcf9-be3e749cb41b</id>
+	<name>PLUGIN_DJ</name>
+	<module>Plugins::DJ::Plugin</module>
+	<version>0.1.0</version>
+	<description>PLUGIN_DJ_DESC</description>
+	<creator>Geir Eilertsen</creator>
+	<optionsURL>plugins/DJ/settings/basic.html</optionsURL>
+	<defaultState>enabled</defaultState>
+	<type>2</type>
+	<targetApplication>
+		<id>Logitech Media Server</id>
+		<minVersion>8.0</minVersion>
+		<maxVersion>*</maxVersion>
+	</targetApplication>
+</extension>

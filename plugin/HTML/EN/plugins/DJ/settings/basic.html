@@ -1,0 +1,11 @@
+[% PROCESS settings/header.html %]
+
+	[% WRAPPER setting title="PLUGIN_DJ_SERVICE_URL" desc="PLUGIN_DJ_SERVICE_URL_DESC" %]
+		<input type="text" class="stdedit" name="pref_service_url" id="pref_service_url" value="[% prefs.pref_service_url | html %]" size="40">
+	[% END %]
+
+	[% WRAPPER setting title="PLUGIN_DJ_TIMEOUT" desc="PLUGIN_DJ_TIMEOUT_DESC" %]
+		<input type="number" min="1" max="30" class="stdedit" name="pref_timeout" id="pref_timeout" value="[% prefs.pref_timeout | html %]" size="5">
+	[% END %]
+
+[% PROCESS settings/footer.html %]

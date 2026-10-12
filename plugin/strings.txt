@@ -1,0 +1,26 @@
+PLUGIN_DJ
+	EN	DJ
+
+PLUGIN_DJ_DESC
+	EN	Suggests what to play next using the dj suggestion service.
+	NO	Foreslår hva som skal spilles videre ved hjelp av dj-tjenesten.
+
+PLUGIN_DJ_DSTM
+	EN	DJ (AI suggestions)
+	NO	DJ (AI-forslag)
+
+PLUGIN_DJ_SERVICE_URL
+	EN	Suggestion service URL
+	NO	Adresse til forslagstjenesten
+
+PLUGIN_DJ_SERVICE_URL_DESC
+	EN	Base URL of the dj suggestion service, e.g. http://localhost:9010
+	NO	Grunnadressen til dj-tjenesten, f.eks. http://localhost:9010
+
+PLUGIN_DJ_TIMEOUT
+	EN	Timeout (seconds)
+	NO	Tidsavbrudd (sekunder)
+
+PLUGIN_DJ_TIMEOUT_DESC
+	EN	How long to wait for suggestions before letting Don't Stop The Music fall back to its default behaviour.
+	NO	Hvor lenge det ventes på forslag før Ikke stopp musikken faller tilbake til standard oppførsel.
