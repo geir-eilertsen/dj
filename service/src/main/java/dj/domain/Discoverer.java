@@ -18,6 +18,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -44,6 +45,8 @@ public final class Discoverer {
     static final int SIMILAR_PER_ARTIST = 3;
     static final double MIN_SIMILAR_MATCH = 0.3;
     static final int MAX_CONSECUTIVE_FAILURES = 5;
+    /** How many top songs to check against the library when guarding against namesakes. */
+    static final int NAMESAKE_CHECK_TRACKS = 20;
     /** After a failed lookup of an artist, don't try again for this long. */
     static final Duration RETRY_AFTER = Duration.ofMinutes(10);
 
@@ -51,6 +54,9 @@ public final class Discoverer {
     }
 
     private record Target(String name, int tracks) {
+    }
+
+    private record Library(Set<String> songs, Map<String, Integer> songsPerArtist) {
     }
 
     private final LibraryPort library;
@@ -99,11 +105,14 @@ public final class Discoverer {
 
     private Result discover(List<String> ownArtists) {
         Set<String> librarySongs = new HashSet<>();
-        Set<String> libraryArtists = new HashSet<>();
+        Map<String, Integer> songsPerArtist = new HashMap<>();
         for (Track track : library.allTracks()) {
-            librarySongs.add(songKey(track.artist(), track.title()));
-            libraryArtists.add(ArtistNames.key(track.artist()));
+            if (librarySongs.add(songKey(track.artist(), track.title()))) {
+                songsPerArtist.merge(ArtistNames.key(track.artist()), 1, Integer::sum);
+            }
         }
+        Set<String> libraryArtists = songsPerArtist.keySet();
+        Library lib = new Library(librarySongs, songsPerArtist);
 
         Map<String, Target> targets = new LinkedHashMap<>();
         Map<String, String> own = new LinkedHashMap<>();
@@ -144,7 +153,7 @@ public final class Discoverer {
                 continue;
             }
             try {
-                List<Track> found = resolve(target, librarySongs);
+                List<Track> found = resolve(target, lib);
                 store.save(target.name(), found, now);
                 failedArtists.remove(entry.getKey());
                 artists++;
@@ -164,19 +173,35 @@ public final class Discoverer {
         return new Result(artists, tracks, failed, false);
     }
 
-    /** The artist's popular songs that aren't in the library, as playable tracks. */
-    private List<Track> resolve(Target target, Set<String> librarySongs) {
+    /**
+     * The artist's popular songs that aren't in the library, as playable tracks.
+     *
+     * <p>Online sources merge artists that share a name ("TNT" the Norwegian rock band and
+     * "TNT" the dance act). If the library has at least two songs by the artist and none of them
+     * is among the source's top songs, the source probably means someone else: nothing is found.
+     */
+    private List<Track> resolve(Target target, Library lib) {
+        String artistKey = ArtistNames.key(target.name());
+        int inLibrary = lib.songsPerArtist().getOrDefault(artistKey, 0);
+        List<String> titles = topTracks.topTracks(target.name(),
+                Math.max(target.tracks() * 3, inLibrary >= 2 ? NAMESAKE_CHECK_TRACKS : 0));
+        if (inLibrary >= 2 && titles.stream().noneMatch(t -> lib.songs().contains(songKey(target.name(), t)))) {
+            LOG.log(Level.INFO, "Skipping {0}: none of its {1} library songs are among the top songs online, "
+                    + "so that is probably a different artist with the same name", target.name(), inLibrary);
+            return List.of();
+        }
+
         List<Track> found = new ArrayList<>();
         Set<String> songs = new HashSet<>();
-        // Ask for extra titles: some are in the library already, some aren't in the catalogue.
-        for (String title : topTracks.topTracks(target.name(), target.tracks() * 3)) {
+        for (String title : titles) {
             if (found.size() == target.tracks()) {
                 break;
             }
             String song = songKey(target.name(), title);
-            if (librarySongs.contains(song) || !songs.add(song)) {
+            if (lib.songs().contains(song) || !songs.add(song)) {
                 continue;
             }
+            // Ask the catalogue only for songs the library lacks.
             catalog.find(target.name(), title).ifPresent(found::add);
         }
         return found;

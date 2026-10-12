@@ -74,6 +74,38 @@ class DiscovererTest {
     }
 
     @Test
+    void skipsANamesakeWhoseTopSongsAreNotTheOnesInTheLibrary() {
+        // The library's TNT is the Norwegian rock band; Last.fm's top songs are a dance act's.
+        library = List.of(track("1", "TNT"), new Track(TrackId.of("2"), "file://2", "10,000 Lovers (In One)", "TNT", "", 1984, 9),
+                new Track(TrackId.of("3"), "file://3", "Everyone's a Star", "TNT", "", 1984, 2));
+        Discoverer discoverer = new Discoverer(() -> library, profiles,
+                new ArtistEnricher(() -> library, name -> Optional.empty(), profiles, Clock.fixed(NOW, ZoneOffset.UTC),
+                        Duration.ofDays(3650)),
+                (artist, limit) -> List.of("2003", "Hard Beat", "OMG", "Reverse The Bass"),
+                tidal, store, Clock.fixed(NOW, ZoneOffset.UTC), Duration.ofDays(30));
+
+        discoverer.discoverAll();
+
+        assertTrue(store.tracksBy("TNT").isEmpty());
+        assertTrue(store.discoveredAt("TNT").isPresent(), "remembered, so it isn't retried every run");
+    }
+
+    @Test
+    void keepsAnArtistWhoseTopSongsIncludeALibrarySong() {
+        library = List.of(new Track(TrackId.of("2"), "file://2", "10,000 Lovers (In One)", "TNT", "", 1984, 9),
+                new Track(TrackId.of("3"), "file://3", "Everyone's a Star", "TNT", "", 1984, 2));
+        Discoverer discoverer = new Discoverer(() -> library, profiles,
+                new ArtistEnricher(() -> library, name -> Optional.empty(), profiles, Clock.fixed(NOW, ZoneOffset.UTC),
+                        Duration.ofDays(3650)),
+                (artist, limit) -> List.of("Seven Seas", "10.000 Lovers (In One)", "Intuition"),
+                tidal, store, Clock.fixed(NOW, ZoneOffset.UTC), Duration.ofDays(30));
+
+        discoverer.discoverAll();
+
+        assertEquals(List.of("Seven Seas", "Intuition"), titles(store.tracksBy("TNT")));
+    }
+
+    @Test
     void leavesRecentlyDiscoveredArtistsAlone() {
         store.save("TV-2", List.of(), NOW.minus(Duration.ofDays(1)));
 
