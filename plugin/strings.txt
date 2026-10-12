@@ -24,3 +24,15 @@ PLUGIN_DJ_TIMEOUT
 PLUGIN_DJ_TIMEOUT_DESC
 	EN	How long to wait for suggestions before letting Don't Stop The Music fall back to its default behaviour.
 	NO	Hvor lenge det ventes på forslag før Ikke stopp musikken faller tilbake til standard oppførsel.
+
+PLUGIN_DJ_START
+	EN	Start DJ
+	NO	Start DJ
+
+PLUGIN_DJ_STARTED
+	EN	DJ is playing
+	NO	DJ spiller
+
+PLUGIN_DJ_START_FAILED
+	EN	Could not get suggestions from the DJ service
+	NO	Fikk ikke forslag fra DJ-tjenesten
