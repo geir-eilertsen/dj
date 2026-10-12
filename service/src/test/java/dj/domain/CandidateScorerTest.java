@@ -61,6 +61,29 @@ class CandidateScorerTest {
     }
 
     @Test
+    void picksOnlyOneVersionOfASong() {
+        Track original = new Track(dj.domain.model.TrackId.of("90"), "spotify:track:a", "Beyond the Great Vast Forest",
+                "Katatonia", "A", 1994, 0);
+        Track remaster = new Track(dj.domain.model.TrackId.of("91"), "tidal://b", "Beyond the Great Vast Forest - Re-Mastered",
+                "Katatonia", "B", 1994, 0);
+
+        List<Track> ranked = scorer().rank(List.of(original, remaster, porcupineTree), List.of(opethSeed), List.of(), 10);
+
+        assertEquals(2, ranked.size());
+        assertTrue(ranked.contains(porcupineTree));
+    }
+
+    @Test
+    void excludesOtherVersionsOfQueuedSongs() {
+        Track queued = new Track(dj.domain.model.TrackId.of("92"), "spotify:track:c", "Dreams", "Fleetwood Mac", "R", 1977, 0);
+        Track remaster = new Track(dj.domain.model.TrackId.of("93"), "tidal://d", "Dreams (2001 Remaster)", "Fleetwood Mac", "R", 1977, 0);
+
+        List<Track> ranked = scorer().rank(List.of(remaster, abba), List.of(queued), List.of(queued), 10);
+
+        assertEquals(ids("13"), Tracks.ids(ranked));
+    }
+
+    @Test
     void penalisesArtistsHeardInTheLastFewTracks() {
         Track queuedKatatonia = track("20", "Katatonia");
 

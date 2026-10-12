@@ -2,6 +2,7 @@ package dj.domain;
 
 import dj.domain.model.ArtistNames;
 import dj.domain.model.ArtistProfile;
+import dj.domain.model.SongTitles;
 import dj.domain.model.Track;
 import dj.domain.model.TrackId;
 import dj.domain.port.ArtistProfileStore;
@@ -141,10 +142,14 @@ public final class CandidateScorer {
         return recent;
     }
 
-    /** Greedy re-ranking: each pick of an artist makes its remaining tracks less attractive. */
+    /**
+     * Greedy re-ranking: each pick of an artist makes its remaining tracks less attractive,
+     * and a song is only picked in one version.
+     */
     private List<Track> spreadArtists(List<Scored> scored, int limit) {
         List<Scored> remaining = new ArrayList<>(scored);
         Map<String, Integer> picksPerArtist = new HashMap<>();
+        Set<String> pickedSongs = new HashSet<>();
         List<Track> ranked = new ArrayList<>(Math.min(limit, remaining.size()));
         while (ranked.size() < limit && !remaining.isEmpty()) {
             Scored best = remaining.stream()
@@ -152,8 +157,11 @@ public final class CandidateScorer {
                             * Math.pow(weights.repeatArtistFactor(), picksPerArtist.getOrDefault(s.artist, 0))))
                     .orElseThrow();
             remaining.remove(best);
-            picksPerArtist.merge(best.artist, 1, Integer::sum);
-            ranked.add(best.track);
+            // Only the best-scoring version of each song.
+            if (pickedSongs.add(songKey(best.track))) {
+                picksPerArtist.merge(best.artist, 1, Integer::sum);
+                ranked.add(best.track);
+            }
         }
         return ranked;
     }
@@ -187,9 +195,9 @@ public final class CandidateScorer {
         return Math.exp(-Math.abs(seedYear - year) / 10.0);
     }
 
-    /** Same song regardless of service, e.g. a Spotify and a TIDAL copy. */
+    /** Same song regardless of service or version, e.g. a Spotify original and a TIDAL remaster. */
     private static String songKey(Track track) {
-        return ArtistNames.key(track.artist()) + "|" + ArtistNames.key(track.title());
+        return ArtistNames.key(track.artist()) + "|" + SongTitles.key(track.title());
     }
 
     private record SeedProfile(Map<String, Double> artists, Map<String, Double> tags, double year) {
