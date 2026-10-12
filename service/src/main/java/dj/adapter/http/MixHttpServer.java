@@ -23,6 +23,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executors;
+import java.util.function.Supplier;
 
 /**
  * HTTP API used by the LMS plugin.
@@ -30,6 +31,7 @@ import java.util.concurrent.Executors;
  * <ul>
  *   <li>{@code GET /mix?player=<id>&seed=<id,id,...>&count=<n>}</li>
  *   <li>{@code GET /health}</li>
+ *   <li>{@code GET /status}: diagnostics from the {@code status} supplier</li>
  * </ul>
  */
 public class MixHttpServer {
@@ -41,12 +43,13 @@ public class MixHttpServer {
     private final HttpServer server;
     private final MixService mixService;
 
-    public MixHttpServer(MixService mixService, int port) throws IOException {
+    public MixHttpServer(MixService mixService, int port, Supplier<Map<String, Object>> status) throws IOException {
         this.mixService = mixService;
         this.server = HttpServer.create(new InetSocketAddress(port), 0);
         server.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
         server.createContext("/mix", this::handleMix);
         server.createContext("/health", exchange -> respond(exchange, 200, Map.of("status", "ok")));
+        server.createContext("/status", exchange -> respond(exchange, 200, status.get()));
     }
 
     public void start() {

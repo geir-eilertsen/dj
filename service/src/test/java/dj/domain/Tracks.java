@@ -13,7 +13,16 @@ final class Tracks {
     }
 
     static Track track(String id) {
-        return new Track(TrackId.of(id), "file:///music/" + id + ".flac", "Title " + id, "Artist " + id, "Album " + id);
+        return track(id, "Artist " + id);
+    }
+
+    static Track track(String id, String artist) {
+        return track(id, artist, 0, 0);
+    }
+
+    static Track track(String id, String artist, int year, int playCount) {
+        return new Track(TrackId.of(id), "file:///music/" + id + ".flac", "Title " + id, artist, "Album " + id,
+                year, playCount);
     }
 
     static List<Track> tracks(String... ids) {

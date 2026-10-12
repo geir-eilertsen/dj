@@ -17,7 +17,7 @@ import java.time.Duration;
 import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Set;
+import java.util.Random;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
@@ -36,7 +36,10 @@ class MixServiceTest {
 
     private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
 
-    private LibraryPort library = new FakeLibrary(tracks("1", "2", "3", "4", "5", "6", "7", "8"));
+    private List<Track> libraryTracks = tracks("1", "2", "3", "4", "5", "6", "7", "8");
+    private LibraryPort library = () -> libraryTracks;
+    private List<TrackId> queue = List.of();
+    private final InMemoryProfileStore profiles = new InMemoryProfileStore();
     private SimilarityPort similarity = (seeds, limit) -> List.of();
     private LlmPort llm = (context, candidates, count) -> List.of();
     private final AtomicReference<PlaybackContext> seenContext = new AtomicReference<>();
@@ -130,6 +133,36 @@ class MixServiceTest {
     }
 
     @Test
+    void neverSuggestsSomethingAlreadyInTheQueue() {
+        queue = ids("1", "2", "3");
+
+        Mix mix = mix(ids("3"), 3);
+
+        assertEquals(ids("4", "5", "6"), ids(mix.tracks()));
+    }
+
+    @Test
+    void ranksLibraryTracksBySimilarityToTheSeeds() {
+        libraryTracks = List.of(Tracks.track("1", "Opeth"), Tracks.track("2", "ABBA"), Tracks.track("3", "Katatonia"));
+        profiles.with("Opeth", List.of("progressive metal"), "Katatonia:0.9");
+
+        Mix mix = mix(ids("1"), 2);
+
+        assertEquals(ids("3", "2"), ids(mix.tracks()));
+    }
+
+    @Test
+    void seedsFromTheEndOfTheQueueWhenTheRequestHasNone() {
+        libraryTracks = List.of(Tracks.track("1", "Opeth"), Tracks.track("2", "ABBA"), Tracks.track("3", "Katatonia"));
+        profiles.with("Opeth", List.of("progressive metal"), "Katatonia:0.9");
+        queue = ids("1");
+
+        Mix mix = mix(List.of(), 1);
+
+        assertEquals(ids("3"), ids(mix.tracks()));
+    }
+
+    @Test
     void ignoresAFailingSimilaritySource() {
         similarity = (seeds, limit) -> {
             throw new IllegalStateException("bliss database missing");
@@ -164,13 +197,13 @@ class MixServiceTest {
         mix(ids("3"), 1);
 
         assertEquals(PLAYER, givenToLlm.get().playerId());
-        assertEquals(ids("3"), givenToLlm.get().recentTracks());
+        assertEquals(ids("3"), givenToLlm.get().queue());
         assertEquals(seenContext.get(), givenToLlm.get());
     }
 
     @Test
     void returnsAnEmptyMixForAnEmptyLibrary() {
-        library = new FakeLibrary(List.of());
+        libraryTracks = List.of();
 
         Mix mix = mix(List.of(), 3);
 
@@ -179,7 +212,7 @@ class MixServiceTest {
 
     @Test
     void propagatesLibraryFailures() {
-        library = (count, exclude) -> {
+        library = () -> {
             throw new LibraryUnavailableException("LMS is down", null);
         };
 
@@ -187,21 +220,14 @@ class MixServiceTest {
     }
 
     private Mix mix(List<TrackId> seeds, int count) {
-        PlaybackContextPort contexts = (playerId, recent) -> {
-            PlaybackContext context = new PlaybackContext(playerId, "Test player", recent, LocalTime.NOON);
+        PlaybackContextPort contexts = (playerId, requestSeeds) -> {
+            PlaybackContext context = new PlaybackContext(playerId, "Test player",
+                    queue.isEmpty() ? requestSeeds : queue, LocalTime.NOON);
             seenContext.set(context);
             return context;
         };
-        MixService service = new MixService(library, similarity, llm, contexts, executor, 10, LLM_TIMEOUT);
+        CandidateScorer scorer = new CandidateScorer(profiles, ScoringWeights.DEFAULTS.withJitter(0), new Random(0));
+        MixService service = new MixService(library, similarity, scorer, llm, contexts, executor, 10, LLM_TIMEOUT);
         return service.mix(new MixRequest(PLAYER, seeds, count));
-    }
-
-    /** Deterministic "random": library order, minus exclusions. */
-    private record FakeLibrary(List<Track> tracks) implements LibraryPort {
-
-        @Override
-        public List<Track> randomTracks(int count, Set<TrackId> exclude) {
-            return tracks.stream().filter(t -> !exclude.contains(t.id())).limit(count).toList();
-        }
     }
 }

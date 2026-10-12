@@ -6,11 +6,11 @@ import java.util.List;
 /**
  * What is happening on the player right now; input for musical judgment.
  *
- * @param recentTracks recently played or queued tracks, oldest first
+ * @param queue the player's queue in play order: what has played and what is still to come
  */
-public record PlaybackContext(String playerId, String playerName, List<TrackId> recentTracks, LocalTime timeOfDay) {
+public record PlaybackContext(String playerId, String playerName, List<TrackId> queue, LocalTime timeOfDay) {
 
     public PlaybackContext {
-        recentTracks = List.copyOf(recentTracks);
+        queue = List.copyOf(queue);
     }
 }

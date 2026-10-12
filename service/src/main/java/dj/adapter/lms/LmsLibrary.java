@@ -13,18 +13,14 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
-import java.util.Random;
-import java.util.Set;
 
 /**
  * Library backed by the LMS JSON-RPC API.
  *
- * <p>LMS's {@code titles} query has no random sort, so the whole track list is loaded into a
- * snapshot (a few hundred bytes per track) and sampled locally. The snapshot is refreshed after
- * {@code ttl}; if a refresh fails, the previous snapshot keeps being used.
+ * <p>The whole track list (a few hundred bytes per track) is loaded into a snapshot that is
+ * refreshed after {@code ttl}; if a refresh fails, the previous snapshot keeps being used.
  */
 public class LmsLibrary implements LibraryPort {
 
@@ -34,28 +30,23 @@ public class LmsLibrary implements LibraryPort {
     private final LmsJsonRpcClient lms;
     private final Duration ttl;
     private final Clock clock;
-    private final Random random;
 
     private List<Track> snapshot;
     private Instant loadedAt = Instant.MIN;
 
     public LmsLibrary(LmsJsonRpcClient lms, Duration ttl) {
-        this(lms, ttl, Clock.systemUTC(), new Random());
+        this(lms, ttl, Clock.systemUTC());
     }
 
-    LmsLibrary(LmsJsonRpcClient lms, Duration ttl, Clock clock, Random random) {
+    LmsLibrary(LmsJsonRpcClient lms, Duration ttl, Clock clock) {
         this.lms = lms;
         this.ttl = ttl;
         this.clock = clock;
-        this.random = random;
     }
 
     @Override
-    public List<Track> randomTracks(int count, Set<TrackId> exclude) {
-        List<Track> tracks = new ArrayList<>(snapshot());
-        tracks.removeIf(track -> exclude.contains(track.id()));
-        Collections.shuffle(tracks, random);
-        return List.copyOf(tracks.subList(0, Math.min(count, tracks.size())));
+    public List<Track> allTracks() {
+        return snapshot();
     }
 
     /** Loads the snapshot now, e.g. at startup so the first mix is fast. */
@@ -94,7 +85,7 @@ public class LmsLibrary implements LibraryPort {
         int offset = 0;
         int total;
         do {
-            JsonNode result = lms.request("", List.of("titles", offset, PAGE_SIZE, "tags:alu"));
+            JsonNode result = lms.request("", List.of("titles", offset, PAGE_SIZE, "tags:aluyO"));
             total = result.path("count").asInt(0);
             JsonNode page = result.path("titles_loop");
             for (JsonNode item : page) {
@@ -119,6 +110,8 @@ public class LmsLibrary implements LibraryPort {
                 url,
                 item.path("title").asText(""),
                 item.path("artist").asText(""),
-                item.path("album").asText("")));
+                item.path("album").asText(""),
+                item.path("year").asInt(0),
+                item.path("playcount").asInt(0)));
     }
 }

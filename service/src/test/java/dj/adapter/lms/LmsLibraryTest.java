@@ -20,13 +20,10 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
-import java.util.Random;
-import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /** Runs the adapter against a fake LMS that serves {@code titles} in pages. */
@@ -58,7 +55,8 @@ class LmsLibraryTest {
                 loop.append(loop.isEmpty() ? "" : ",")
                         .append("{\"id\":").append(i + 1)
                         .append(",\"title\":\"T").append(i + 1)
-                        .append("\",\"artist\":\"A\",\"album\":\"B\",\"url\":\"spotify:track:").append(i + 1).append("\"}");
+                        .append("\",\"artist\":\"A\",\"album\":\"B\",\"year\":\"1997\",\"playcount\":\"").append(i + 1)
+                        .append("\",\"url\":\"spotify:track:").append(i + 1).append("\"}");
             }
             byte[] body = ("{\"result\":{\"count\":" + LIBRARY_SIZE + ",\"titles_loop\":[" + loop + "]}}")
                     .getBytes(StandardCharsets.UTF_8);
@@ -76,27 +74,31 @@ class LmsLibraryTest {
     }
 
     @Test
-    void loadsEveryPageAndSamplesWithoutExcludedTracks() {
-        LmsLibrary library = library();
+    void loadsEveryPage() {
+        List<Track> tracks = library().allTracks();
 
-        List<Track> tracks = library.randomTracks(LIBRARY_SIZE, Set.of(TrackId.of("1"), TrackId.of("1203")));
-
-        assertEquals(LIBRARY_SIZE - 2, tracks.size());
-        assertEquals(LIBRARY_SIZE - 2, tracks.stream().map(Track::id).distinct().count());
-        assertFalse(tracks.stream().anyMatch(t -> t.id().value().equals("1") || t.id().value().equals("1203")));
+        assertEquals(LIBRARY_SIZE, tracks.size());
+        assertEquals(LIBRARY_SIZE, tracks.stream().map(Track::id).distinct().count());
         assertEquals(3, requests.get());
+    }
+
+    @Test
+    void readsTrackFields() {
+        Track track = library().allTracks().get(6);
+
+        assertEquals(new Track(TrackId.of("7"), "spotify:track:7", "T7", "A", "B", 1997, 7), track);
     }
 
     @Test
     void reusesTheSnapshotUntilItExpires() {
         LmsLibrary library = library();
 
-        library.randomTracks(5, Set.of());
-        library.randomTracks(5, Set.of());
+        library.allTracks();
+        library.allTracks();
         assertEquals(3, requests.get());
 
         clock.advance(Duration.ofMinutes(16));
-        library.randomTracks(5, Set.of());
+        library.allTracks();
         assertEquals(6, requests.get());
     }
 
@@ -108,19 +110,19 @@ class LmsLibraryTest {
         lmsDown.set(true);
         clock.advance(Duration.ofMinutes(16));
 
-        assertEquals(5, library.randomTracks(5, Set.of()).size());
+        assertEquals(LIBRARY_SIZE, library.allTracks().size());
     }
 
     @Test
     void failsWhenLmsIsDownAndNothingIsCached() {
         lmsDown.set(true);
 
-        assertThrows(LibraryUnavailableException.class, () -> library().randomTracks(5, Set.of()));
+        assertThrows(LibraryUnavailableException.class, () -> library().allTracks());
     }
 
     private LmsLibrary library() {
         URI url = URI.create("http://127.0.0.1:" + fakeLms.getAddress().getPort());
-        return new LmsLibrary(new LmsJsonRpcClient(url, Duration.ofSeconds(2)), Duration.ofMinutes(15), clock, new Random(42));
+        return new LmsLibrary(new LmsJsonRpcClient(url, Duration.ofSeconds(2)), Duration.ofMinutes(15), clock);
     }
 
     private static final class MutableClock extends Clock {
