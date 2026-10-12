@@ -38,13 +38,15 @@ public class LmsPlaybackContext implements PlaybackContextPort {
         LocalTime now = LocalTime.now(clock);
         try {
             JsonNode status = lms.request(playerId, List.of("status", 0, MAX_QUEUE, "tags:aluy"));
-            return new PlaybackContext(playerId, status.path("player_name").asText(playerId), queue(status), now);
+            return new PlaybackContext(playerId, status.path("player_name").asText(playerId),
+                    "play".equals(status.path("mode").asText()), queue(status), now);
         } catch (IOException | RuntimeException e) {
             LOG.log(Level.WARNING, "Could not read status for " + playerId + "; mixing without the queue", e);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
-        return new PlaybackContext(playerId, playerId, List.of(), now);
+        // Assume playing: without knowing better, don't treat it as a fresh start.
+        return new PlaybackContext(playerId, playerId, true, List.of(), now);
     }
 
     static List<Track> queue(JsonNode status) {

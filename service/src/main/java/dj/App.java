@@ -5,17 +5,21 @@ import dj.adapter.lastfm.LastFmArtistInfo;
 import dj.adapter.lms.LmsJsonRpcClient;
 import dj.adapter.lms.LmsLibrary;
 import dj.adapter.lms.LmsPlaybackContext;
+import dj.adapter.lms.LmsPlayerActivity;
 import dj.adapter.lms.LmsTidalCatalog;
 import dj.adapter.sqlite.SqliteArtistProfileStore;
 import dj.adapter.sqlite.SqliteDiscoveryStore;
+import dj.adapter.sqlite.SqlitePlayHistory;
 import dj.adapter.stub.NoLlm;
 import dj.adapter.stub.NoSimilarity;
 import dj.domain.ArtistEnricher;
 import dj.domain.CandidateScorer;
 import dj.domain.Discoverer;
+import dj.domain.HistoryRecorder;
 import dj.domain.MixService;
 import dj.domain.MixSettings;
 import dj.domain.ScoringWeights;
+import dj.domain.TimeOfDaySeeds;
 
 import java.io.IOException;
 import java.lang.System.Logger;
@@ -51,6 +55,9 @@ public final class App {
         SqliteArtistProfileStore profiles = new SqliteArtistProfileStore(config.dataDir().resolve("dj.db"));
 
         SqliteDiscoveryStore discovered = new SqliteDiscoveryStore(config.dataDir().resolve("discovery.db"));
+        SqlitePlayHistory history = new SqlitePlayHistory(config.dataDir().resolve("history.db"));
+        HistoryRecorder recorder = new HistoryRecorder(
+                new LmsPlayerActivity(new LmsJsonRpcClient(config.lmsUrl(), Duration.ofSeconds(5))), history, Clock.systemUTC());
         Optional<LastFmArtistInfo> lastFm = config.lastFmApiKey().map(LastFmArtistInfo::new);
         Optional<ArtistEnricher> enricher = lastFm.map(source -> new ArtistEnricher(
                 library, source, profiles, Clock.systemUTC(), config.artistMaxAge()));
@@ -71,6 +78,7 @@ public final class App {
                 playbackContext,
                 enricher,
                 discoverer,
+                new TimeOfDaySeeds(history, Clock.systemDefaultZone(), new Random()),
                 executor,
                 new MixSettings(config.candidatePoolSize(), config.llmTimeout(), config.seedLookupTimeout(),
                         config.discoveryShare()));
@@ -98,7 +106,8 @@ public final class App {
             }
         });
 
-        ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
+        ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(2);
+        scheduler.scheduleWithFixedDelay(recorder::poll, 15, 30, TimeUnit.SECONDS);
         if (enricher.isPresent()) {
             scheduler.scheduleWithFixedDelay(() -> {
                 try {

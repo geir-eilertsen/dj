@@ -47,6 +47,8 @@ class MixServiceTest {
     private final InMemoryDiscoveryStore discovered = new InMemoryDiscoveryStore();
     private Optional<Discoverer> discoverer = Optional.empty();
     private double discoveryShare = 0.4;
+    private boolean playing = true;
+    private final InMemoryPlayHistory history = new InMemoryPlayHistory();
     private final InMemoryProfileStore profiles = new InMemoryProfileStore();
     private SimilarityPort similarity = (seeds, limit) -> List.of();
     private LlmPort llm = (context, candidates, count) -> List.of();
@@ -351,6 +353,32 @@ class MixServiceTest {
         assertEquals(ids(lib), ids(MixService.interleave(lib, disc, 0)).subList(0, 6));
     }
 
+    @Test
+    void startsAStoppedPlayerFromWhatItPlaysAtThisTimeOfDay() {
+        useDanishLibrary();
+        profiles.with("Kim Larsen", List.of("danish"), "Gasolin':0.9");
+        history.record(new dj.domain.model.Play(PLAYER, Instant.now().minus(Duration.ofDays(7)),
+                streamed("-100", "Kim Larsen", "Sommer")));
+        playing = false;
+        queue = queued("2", "3");
+
+        // The request seed (Opeth, the stopped player's current track) is ignored.
+        Mix mix = mix(ids("2"), 1);
+
+        assertEquals(ids("1"), ids(mix.tracks()));
+    }
+
+    @Test
+    void aStoppedPlayerWithoutHistoryUsesTheRequestSeeds() {
+        useDanishLibrary();
+        profiles.with("Opeth", List.of("metal"), "TOOL:0.9");
+        playing = false;
+
+        Mix mix = mix(ids("2"), 1);
+
+        assertEquals(ids("3"), ids(mix.tracks()));
+    }
+
     /** Gasolin' (Kim Larsen's band) plus two much more played metal bands. */
     private void useDanishLibrary() {
         libraryTracks = List.of(Tracks.track("1", "Gasolin'", 1975, 1),
@@ -372,13 +400,14 @@ class MixServiceTest {
 
     private Mix mix(List<TrackId> seeds, int count) {
         PlaybackContextPort contexts = playerId -> {
-            PlaybackContext context = new PlaybackContext(playerId, "Test player", queue, LocalTime.NOON);
+            PlaybackContext context = new PlaybackContext(playerId, "Test player", playing, queue, LocalTime.NOON);
             seenContext.set(context);
             return context;
         };
         CandidateScorer scorer = new CandidateScorer(profiles, ScoringWeights.DEFAULTS.withJitter(0), new Random(0));
         MixService service = new MixService(library, discovered, similarity, scorer, llm, contexts, enricher,
-                discoverer, executor, new MixSettings(10, LLM_TIMEOUT, seedLookupTimeout, discoveryShare));
+                discoverer, new TimeOfDaySeeds(history, java.time.Clock.systemDefaultZone(), new Random(0)), executor,
+                new MixSettings(10, LLM_TIMEOUT, seedLookupTimeout, discoveryShare));
         return service.mix(new MixRequest(PLAYER, seeds, count));
     }
 }

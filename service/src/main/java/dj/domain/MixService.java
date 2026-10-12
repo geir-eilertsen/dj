@@ -29,8 +29,10 @@ import java.util.concurrent.TimeoutException;
 /**
  * Decides what a player should play next.
  *
- * <p>Seeds are the request's tracks or else the end of the player's queue, whether or not they
- * are in the library: music played straight from a streaming service still has an artist.
+ * <p>A stopped player is starting from scratch: its seeds are songs it played around this time
+ * of day ({@link TimeOfDaySeeds}). Otherwise seeds are the request's tracks or else the end of
+ * the player's queue, whether or not they are in the library: music played straight from a
+ * streaming service still has an artist.
  * Seed artists without a profile are looked up on demand, waiting at most
  * {@link MixSettings#seedLookupTimeout()}; a slow lookup finishes in the background for later
  * mixes. Artists played from a streaming service also trigger background discovery.
@@ -57,6 +59,7 @@ public final class MixService {
     private final PlaybackContextPort playbackContext;
     private final Optional<ArtistEnricher> enricher;
     private final Optional<Discoverer> discoverer;
+    private final TimeOfDaySeeds timeOfDaySeeds;
     private final Executor executor;
     private final MixSettings settings;
 
@@ -68,7 +71,7 @@ public final class MixService {
     public MixService(LibraryPort library, DiscoveryStore discovered, SimilarityPort similarity,
                       CandidateScorer scorer, LlmPort llm, PlaybackContextPort playbackContext,
                       Optional<ArtistEnricher> enricher, Optional<Discoverer> discoverer,
-                      Executor executor, MixSettings settings) {
+                      TimeOfDaySeeds timeOfDaySeeds, Executor executor, MixSettings settings) {
         this.library = Objects.requireNonNull(library);
         this.discovered = Objects.requireNonNull(discovered);
         this.similarity = Objects.requireNonNull(similarity);
@@ -77,6 +80,7 @@ public final class MixService {
         this.playbackContext = Objects.requireNonNull(playbackContext);
         this.enricher = Objects.requireNonNull(enricher);
         this.discoverer = Objects.requireNonNull(discoverer);
+        this.timeOfDaySeeds = Objects.requireNonNull(timeOfDaySeeds);
         this.executor = Objects.requireNonNull(executor);
         this.settings = Objects.requireNonNull(settings);
     }
@@ -101,10 +105,13 @@ public final class MixService {
         Map<TrackId, Track> queued = new HashMap<>();
         queue.forEach(t -> queued.putIfAbsent(t.id(), t));
 
-        List<Track> seeds = request.seeds().stream()
-                .map(id -> byId.containsKey(id) ? byId.get(id) : queued.get(id))
-                .filter(Objects::nonNull)
-                .toList();
+        List<Track> seeds = context.playing() ? List.of() : timeOfDaySeeds.pick(request.playerId());
+        if (seeds.isEmpty()) {
+            seeds = request.seeds().stream()
+                    .map(id -> byId.containsKey(id) ? byId.get(id) : queued.get(id))
+                    .filter(Objects::nonNull)
+                    .toList();
+        }
         if (seeds.isEmpty()) {
             seeds = queue.subList(Math.max(0, queue.size() - SEEDS_FROM_QUEUE), queue.size());
         }
