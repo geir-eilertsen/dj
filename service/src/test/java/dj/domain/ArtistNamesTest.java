@@ -24,6 +24,24 @@ class ArtistNamesTest {
     }
 
     @Test
+    void groupsSideProjectsAndLineUps() {
+        assertEquals("devin townsend", ArtistNames.groupKey("Devin Townsend Project"));
+        assertEquals("devin townsend", ArtistNames.groupKey("Devin Townsend Band"));
+        assertEquals("devin townsend", ArtistNames.groupKey("Devin Townsend"));
+        assertEquals("nick cave", ArtistNames.groupKey("Nick Cave & The Bad Seeds"));
+        assertEquals("kygo", ArtistNames.groupKey("Kygo feat. James Vincent McMorrow"));
+        assertEquals("jimi hendrix", ArtistNames.groupKey("The Jimi Hendrix Experience"));
+    }
+
+    @Test
+    void leavesOrdinaryNamesAlone() {
+        assertEquals("band", ArtistNames.groupKey("The Band"));
+        assertEquals("simon and garfunkel", ArtistNames.groupKey("Simon & Garfunkel"));
+        assertEquals("opeth", ArtistNames.groupKey("Opeth"));
+        assertNotEquals(ArtistNames.groupKey("Steven Wilson"), ArtistNames.groupKey("Porcupine Tree"));
+    }
+
+    @Test
     void handlesNull() {
         assertEquals("", ArtistNames.key(null));
     }

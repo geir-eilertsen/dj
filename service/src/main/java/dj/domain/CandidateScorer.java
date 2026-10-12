@@ -66,14 +66,15 @@ public final class CandidateScorer {
                 continue;
             }
             String artist = ArtistNames.key(track.artist());
+            String group = ArtistNames.groupKey(track.artist());
             double score = artistScores.computeIfAbsent(artist, a -> artistScore(seed, a));
             score += weights.plays() * (maxPlays > 0 ? Math.log1p(track.playCount()) / maxPlays : 0);
             score += weights.year() * yearCloseness(seed.year, track.year());
             score += weights.jitter() * random.nextDouble();
-            if (recentArtists.contains(artist)) {
+            if (recentArtists.contains(group)) {
                 score *= weights.recentArtistFactor();
             }
-            scored.add(new Scored(track, artist, score));
+            scored.add(new Scored(track, group, score));
         }
         return spreadArtists(scored, limit);
     }
@@ -135,7 +136,7 @@ public final class CandidateScorer {
     private Set<String> recentArtists(List<Track> queue) {
         Set<String> recent = new HashSet<>();
         for (int i = Math.max(0, queue.size() - weights.recentArtistWindow()); i < queue.size(); i++) {
-            recent.add(ArtistNames.key(queue.get(i).artist()));
+            recent.add(ArtistNames.groupKey(queue.get(i).artist()));
         }
         return recent;
     }
@@ -194,6 +195,7 @@ public final class CandidateScorer {
     private record SeedProfile(Map<String, Double> artists, Map<String, Double> tags, double year) {
     }
 
+    /** {@code artist} is the group key: side projects count as the same artist. */
     private record Scored(Track track, String artist, double score) {
     }
 }

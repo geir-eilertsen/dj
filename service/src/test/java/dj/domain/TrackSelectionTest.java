@@ -83,6 +83,52 @@ class TrackSelectionTest {
     }
 
     @Test
+    void allowsOneTrackPerArtistInAFiveTrackMix() {
+        List<Track> clustered = List.of(track("1", "Devin Townsend Project"), track("2", "Devin Townsend Band"),
+                track("3", "Opeth"), track("4", "Opeth"), track("5", "Katatonia"), track("6", "Gojira"),
+                track("7", "Riverside"), track("8", "TOOL"));
+
+        List<Track> selected = TrackSelection.select(clustered, List.of(), 5);
+
+        assertEquals(ids("1", "3", "5", "6", "7"), ids(selected));
+    }
+
+    @Test
+    void allowsTwoTracksPerArtistInATenTrackMix() {
+        List<Track> clustered = new java.util.ArrayList<>();
+        for (int i = 1; i <= 4; i++) {
+            clustered.add(track("d" + i, i % 2 == 0 ? "Devin Townsend Band" : "Devin Townsend Project"));
+        }
+        for (int i = 1; i <= 8; i++) {
+            clustered.add(track("o" + i, "Other " + i));
+        }
+
+        List<Track> selected = TrackSelection.select(clustered, List.of(), 10);
+
+        assertEquals(2, selected.stream().filter(t -> t.artist().startsWith("Devin")).count());
+        assertEquals(10, selected.size());
+    }
+
+    @Test
+    void capsTheLlmChoicesToo() {
+        List<Track> clustered = List.of(track("1", "Opeth"), track("2", "Opeth"), track("3", "Opeth"),
+                track("4", "Katatonia"), track("5", "Gojira"));
+
+        List<Track> selected = TrackSelection.select(clustered, ids("3", "2", "1"), 3);
+
+        assertEquals(ids("3", "4", "5"), ids(selected));
+    }
+
+    @Test
+    void relaxesTheCapRatherThanReturnAShortMix() {
+        List<Track> oneArtist = List.of(track("1", "Opeth"), track("2", "Opeth"), track("3", "Opeth"));
+
+        List<Track> selected = TrackSelection.select(oneArtist, ids("2"), 3);
+
+        assertEquals(ids("2", "1", "3"), ids(selected));
+    }
+
+    @Test
     void anyValidIsFalseWhenEveryChoiceIsInvented() {
         assertFalse(TrackSelection.anyValid(candidates, ids("98", "99")));
         assertTrue(TrackSelection.anyValid(candidates, ids("98", "3")));

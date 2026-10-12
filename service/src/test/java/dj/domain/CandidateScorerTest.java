@@ -71,6 +71,19 @@ class CandidateScorerTest {
     }
 
     @Test
+    void treatsSideProjectsAsTheSameArtistForRecency() {
+        profiles.with("Opeth", List.of("progressive metal"), "Devin Townsend Project:0.9", "Gojira:0.6");
+        Track devinProject = track("80", "Devin Townsend Project");
+        Track gojira = track("81", "Gojira");
+        Track queuedDevinBand = track("82", "Devin Townsend Band");
+
+        List<Track> ranked = scorer().rank(List.of(devinProject, gojira),
+                List.of(opethSeed), List.of(queuedDevinBand, opethSeed), 2);
+
+        assertEquals(ids("81", "80"), Tracks.ids(ranked));
+    }
+
+    @Test
     void spreadsTheTopOfTheListAcrossArtists() {
         List<Track> library = List.of(
                 track("30", "Katatonia"), track("31", "Katatonia"), track("32", "Katatonia"),
