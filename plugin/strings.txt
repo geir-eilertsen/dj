@@ -36,3 +36,15 @@ PLUGIN_DJ_STARTED
 PLUGIN_DJ_START_FAILED
 	EN	Could not get suggestions from the DJ service
 	NO	Fikk ikke forslag fra DJ-tjenesten
+
+PLUGIN_DJ_WHY
+	EN	Why this track?
+	NO	Hvorfor denne låten?
+
+PLUGIN_DJ_WHY_UNKNOWN
+	EN	DJ didn't choose this track, or gave no reason for it.
+	NO	DJ valgte ikke denne låten, eller oppga ingen grunn.
+
+PLUGIN_DJ_WHY_NOTHING
+	EN	Nothing is playing.
+	NO	Ingenting spilles.

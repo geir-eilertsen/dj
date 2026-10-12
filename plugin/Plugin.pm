@@ -36,7 +36,13 @@ my $prefs = preferences('plugin.dj');
 
 $prefs->init({
 	service_url => 'http://localhost:9010',
-	timeout     => 5,
+	timeout     => 10,
+});
+
+# 0.4: mixes may wait for Claude, so the old 5 second default is too short
+$prefs->migrate(1, sub {
+	$prefs->set('timeout', 10) if ($prefs->get('timeout') || 0) < 10;
+	1;
 });
 
 $prefs->setValidate({ 'validator' => 'intlimit', 'low' => 1, 'high' => 30 }, 'timeout');
@@ -82,8 +88,51 @@ sub handleFeed {
 			type       => 'link',
 			url        => \&startDj,
 			nextWindow => 'nowPlaying',
+		},{
+			name => cstring($client, 'PLUGIN_DJ_WHY'),
+			type => 'link',
+			url  => \&whyThisTrack,
 		}],
 	});
+}
+
+# "Why this track?": the reason DJ gave for the song that's playing, if DJ chose it.
+sub whyThisTrack {
+	my ($client, $cb) = @_;
+
+	$client = $client->master;
+
+	my $answer = sub {
+		my ($text) = @_;
+		$cb->({ items => [{ name => $text, type => 'text', wrap => 1 }] });
+	};
+
+	my $song = Slim::Player::Playlist::song($client);
+	my $url  = blessed($song) ? $song->url : $song;
+	if (!$url) {
+		$answer->(cstring($client, 'PLUGIN_DJ_WHY_NOTHING'));
+		return;
+	}
+
+	my $base = $prefs->get('service_url');
+	$base =~ s{/+$}{};
+
+	Slim::Networking::SimpleAsyncHTTP->new(
+		sub {
+			my $http = shift;
+			my $reason = eval { from_json($http->content)->{reason} };
+			$answer->($reason || cstring($client, 'PLUGIN_DJ_WHY_UNKNOWN'));
+		},
+		sub {
+			# 404 when DJ didn't choose the track (or gave no reason); anything else is a failure
+			my ($http, $error) = @_;
+			$log->info("No reason from dj service: $error") if main::INFOLOG && $log->is_info;
+			$answer->(cstring($client, 'PLUGIN_DJ_WHY_UNKNOWN'));
+		},
+		{
+			timeout => $prefs->get('timeout'),
+		},
+	)->get(sprintf('%s/why?player=%s&url=%s', $base, uri_escape_utf8($client->id), uri_escape_utf8($url)));
 }
 
 # "Start DJ": replace the queue with a fresh mix following the current track, play it,
