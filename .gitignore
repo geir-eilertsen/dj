@@ -1,0 +1,18 @@
+# Maven
+service/target/
+
+# IDEs
+.idea/
+*.iml
+.vscode/
+.classpath
+.project
+.settings/
+
+# OS / editor
+.DS_Store
+*~
+*.swp
+
+# Local secrets (API keys for future LLM adapters)
+.env
