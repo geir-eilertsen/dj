@@ -16,7 +16,9 @@ use JSON::XS::VersionOneAndTwo;
 use Scalar::Util qw(blessed);
 use URI::Escape qw(uri_escape_utf8);
 
+use Slim::Menu::TrackInfo;
 use Slim::Networking::SimpleAsyncHTTP;
+use Slim::Utils::Cache;
 use Slim::Utils::Log;
 use Slim::Utils::Prefs;
 use Slim::Utils::Strings qw(cstring);
@@ -25,6 +27,7 @@ use constant DSTM_HANDLER     => 'PLUGIN_DJ_DSTM';
 use constant NUM_SEED_TRACKS  => 5;
 use constant NUM_MIX_TRACKS   => 5;
 use constant NUM_START_TRACKS => 10;
+use constant REASON_TTL       => 86400 * 30;
 
 my $log = Slim::Utils::Log->addLogCategory({
 	'category'     => 'plugin.dj',
@@ -33,6 +36,10 @@ my $log = Slim::Utils::Log->addLogCategory({
 });
 
 my $prefs = preferences('plugin.dj');
+
+# Track URL => the reason DJ gave for suggesting it, from the mix responses. Track info menus
+# are built synchronously, so they read this instead of asking the service.
+my $reasons = Slim::Utils::Cache->new('dj', 1);
 
 $prefs->init({
 	service_url => 'http://localhost:9010',
@@ -54,6 +61,12 @@ sub initPlugin {
 		require Plugins::DJ::Settings;
 		Plugins::DJ::Settings->new();
 	}
+
+	# Shows in the track info of the playing song (Material: Now Playing, ⋮ More)
+	Slim::Menu::TrackInfo->registerInfoProvider( djReason => (
+		before => 'contributors',
+		func   => \&trackInfoReason,
+	) );
 
 	$class->SUPER::initPlugin(
 		feed   => \&handleFeed,
@@ -96,6 +109,20 @@ sub handleFeed {
 	});
 }
 
+# Track info item with DJ's reason for a track, if DJ suggested it with one.
+sub trackInfoReason {
+	my ($client, $url, $track) = @_;
+
+	my $reason = $url && $reasons->get($url);
+	return unless $reason;
+
+	return {
+		name   => cstring($client, 'PLUGIN_DJ_WHY_CHOSEN'),
+		items  => [{ type => 'text', wrap => 1, name => $reason }],
+		unfold => 1,
+	};
+}
+
 # "Why this track?": the reason DJ gave for the song that's playing, if DJ chose it.
 sub whyThisTrack {
 	my ($client, $cb) = @_;
@@ -111,6 +138,11 @@ sub whyThisTrack {
 	my $url  = blessed($song) ? $song->url : $song;
 	if (!$url) {
 		$answer->(cstring($client, 'PLUGIN_DJ_WHY_NOTHING'));
+		return;
+	}
+
+	if (my $reason = $reasons->get($url)) {
+		$answer->($reason);
 		return;
 	}
 
@@ -212,6 +244,9 @@ sub _requestMix {
 
 			my $tracks = eval {
 				my $response = from_json($http->content);
+				for my $track (@{ $response->{tracks} || [] }) {
+					$reasons->set($track->{url}, $track->{reason}, REASON_TTL) if $track->{url} && $track->{reason};
+				}
 				[ grep { $_ } map { $_->{url} } @{ $response->{tracks} || [] } ];
 			};
 

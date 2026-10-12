@@ -48,3 +48,7 @@ PLUGIN_DJ_WHY_UNKNOWN
 PLUGIN_DJ_WHY_NOTHING
 	EN	Nothing is playing.
 	NO	Ingenting spilles.
+
+PLUGIN_DJ_WHY_CHOSEN
+	EN	Why DJ chose this
+	NO	Hvorfor DJ valgte denne
