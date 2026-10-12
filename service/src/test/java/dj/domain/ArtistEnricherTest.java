@@ -96,6 +96,29 @@ class ArtistEnricherTest {
         assertEquals(ArtistEnricher.MAX_CONSECUTIVE_FAILURES, fetched.size());
     }
 
+    @Test
+    void ensureFetchesOnlyMissingOrStaleArtists() {
+        store.save(profile("Opeth", NOW.minus(Duration.ofDays(1))));
+
+        enricher(this::found).ensure(List.of("Kim Larsen", "OPETH", "Kim Larsen", ""));
+
+        assertEquals(List.of("Kim Larsen"), fetched);
+        assertTrue(store.find("kim larsen").isPresent());
+    }
+
+    @Test
+    void ensureDoesNotRetryAFailedArtistStraightAway() {
+        ArtistEnricher enricher = enricher(name -> {
+            fetched.add(name);
+            throw new IllegalStateException("no network");
+        });
+
+        enricher.ensure(List.of("Kim Larsen"));
+        enricher.ensure(List.of("Kim Larsen"));
+
+        assertEquals(List.of("Kim Larsen"), fetched);
+    }
+
     private Optional<ArtistProfile> found(String name) {
         fetched.add(name);
         return Optional.of(profile(name, NOW));

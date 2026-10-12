@@ -20,6 +20,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Random;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -45,16 +46,21 @@ public final class App {
                 new LmsPlaybackContext(new LmsJsonRpcClient(config.lmsUrl(), Duration.ofSeconds(2)), Clock.systemDefaultZone());
         SqliteArtistProfileStore profiles = new SqliteArtistProfileStore(config.dataDir().resolve("dj.db"));
 
-        ExecutorService llmExecutor = Executors.newVirtualThreadPerTaskExecutor();
+        Optional<ArtistEnricher> enricher = config.lastFmApiKey().map(key -> new ArtistEnricher(
+                library, new LastFmArtistInfo(key), profiles, Clock.systemUTC(), config.artistMaxAge()));
+
+        ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
         MixService mixService = new MixService(
                 library,
                 new NoSimilarity(),
                 new CandidateScorer(profiles, ScoringWeights.DEFAULTS, new Random()),
                 new NoLlm(),
                 playbackContext,
-                llmExecutor,
+                enricher,
+                executor,
                 config.candidatePoolSize(),
-                config.llmTimeout());
+                config.llmTimeout(),
+                config.seedLookupTimeout());
 
         AtomicReference<ArtistEnricher.Result> lastEnrichment = new AtomicReference<>();
         MixHttpServer server = new MixHttpServer(mixService, config.port(), () -> {
@@ -76,12 +82,10 @@ public final class App {
         });
 
         ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
-        if (config.lastFmApiKey().isPresent()) {
-            ArtistEnricher enricher = new ArtistEnricher(library, new LastFmArtistInfo(config.lastFmApiKey().get()),
-                    profiles, Clock.systemUTC(), config.artistMaxAge());
+        if (enricher.isPresent()) {
             scheduler.scheduleWithFixedDelay(() -> {
                 try {
-                    lastEnrichment.set(enricher.enrich());
+                    lastEnrichment.set(enricher.get().enrich());
                 } catch (RuntimeException e) {
                     LOG.log(Level.WARNING, "Artist enrichment failed", e);
                 }
@@ -93,7 +97,7 @@ public final class App {
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             server.stop();
             scheduler.shutdownNow();
-            llmExecutor.shutdownNow();
+            executor.shutdownNow();
         }));
     }
 }

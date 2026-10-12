@@ -1,5 +1,6 @@
 package dj.domain;
 
+import dj.domain.model.ArtistProfile;
 import dj.domain.model.Mix;
 import dj.domain.model.MixRequest;
 import dj.domain.model.PlaybackContext;
@@ -14,9 +15,11 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.Random;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -38,7 +41,9 @@ class MixServiceTest {
 
     private List<Track> libraryTracks = tracks("1", "2", "3", "4", "5", "6", "7", "8");
     private LibraryPort library = () -> libraryTracks;
-    private List<TrackId> queue = List.of();
+    private List<Track> queue = List.of();
+    private Optional<ArtistEnricher> enricher = Optional.empty();
+    private Duration seedLookupTimeout = Duration.ofSeconds(1);
     private final InMemoryProfileStore profiles = new InMemoryProfileStore();
     private SimilarityPort similarity = (seeds, limit) -> List.of();
     private LlmPort llm = (context, candidates, count) -> List.of();
@@ -134,7 +139,7 @@ class MixServiceTest {
 
     @Test
     void neverSuggestsSomethingAlreadyInTheQueue() {
-        queue = ids("1", "2", "3");
+        queue = queued("1", "2", "3");
 
         Mix mix = mix(ids("3"), 3);
 
@@ -155,7 +160,7 @@ class MixServiceTest {
     void seedsFromTheEndOfTheQueueWhenTheRequestHasNone() {
         libraryTracks = List.of(Tracks.track("1", "Opeth"), Tracks.track("2", "ABBA"), Tracks.track("3", "Katatonia"));
         profiles.with("Opeth", List.of("progressive metal"), "Katatonia:0.9");
-        queue = ids("1");
+        queue = queued("1");
 
         Mix mix = mix(List.of(), 1);
 
@@ -194,10 +199,12 @@ class MixServiceTest {
             return List.of();
         };
 
+        queue = queued("3");
+
         mix(ids("3"), 1);
 
         assertEquals(PLAYER, givenToLlm.get().playerId());
-        assertEquals(ids("3"), givenToLlm.get().queue());
+        assertEquals(ids("3"), ids(givenToLlm.get().queue()));
         assertEquals(seenContext.get(), givenToLlm.get());
     }
 
@@ -219,15 +226,92 @@ class MixServiceTest {
         assertThrows(LibraryUnavailableException.class, () -> mix(List.of(), 3));
     }
 
+    @Test
+    void followsMusicPlayedStraightFromAStreamingService() {
+        useDanishLibrary();
+        profiles.with("Kim Larsen", List.of("danish", "rock"), "Gasolin':0.9");
+        queue = List.of(streamed("-100", "Kim Larsen", "Sommer"), streamed("-101", "Kim Larsen", "Frakken"));
+
+        Mix mix = mix(List.of(), 1);
+
+        assertEquals(ids("1"), ids(mix.tracks()));
+    }
+
+    @Test
+    void resolvesRequestSeedsThatAreOnlyInTheQueue() {
+        useDanishLibrary();
+        profiles.with("Kim Larsen", List.of("danish", "rock"), "Gasolin':0.9");
+        queue = List.of(streamed("-100", "Kim Larsen", "Sommer"), queued("2").getFirst());
+
+        Mix mix = mix(ids("-100"), 1);
+
+        assertEquals(ids("1"), ids(mix.tracks()));
+    }
+
+    @Test
+    void looksUpSeedArtistsThatHaveNoProfileYet() {
+        useDanishLibrary();
+        List<String> lookedUp = new ArrayList<>();
+        enricher = Optional.of(enricher(name -> {
+            lookedUp.add(name);
+            return Optional.of(new ArtistProfile(name, List.of(new ArtistProfile.Tag("danish", 1)),
+                    List.of(new ArtistProfile.SimilarArtist("Gasolin'", 0.9)), Instant.EPOCH));
+        }));
+        queue = List.of(streamed("-100", "Kim Larsen", "Sommer"));
+
+        Mix mix = mix(List.of(), 1);
+
+        assertEquals(List.of("Kim Larsen"), lookedUp);
+        assertEquals(ids("1"), ids(mix.tracks()));
+    }
+
+    @Test
+    void doesNotWaitLongForASlowArtistLookup() {
+        useDanishLibrary();
+        enricher = Optional.of(enricher(name -> {
+            try {
+                Thread.sleep(Duration.ofSeconds(10));
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            return Optional.empty();
+        }));
+        seedLookupTimeout = Duration.ofMillis(100);
+        queue = List.of(streamed("-100", "Kim Larsen", "Sommer"));
+
+        Mix mix = assertTimeoutPreemptively(Duration.ofSeconds(2), () -> mix(List.of(), 2));
+
+        assertEquals(2, mix.tracks().size());
+    }
+
+    /** Gasolin' (Kim Larsen's band) plus two much more played metal bands. */
+    private void useDanishLibrary() {
+        libraryTracks = List.of(Tracks.track("1", "Gasolin'", 1975, 1),
+                Tracks.track("2", "Opeth", 2005, 50), Tracks.track("3", "TOOL", 2006, 40));
+    }
+
+    private static Track streamed(String id, String artist, String title) {
+        return new Track(TrackId.of(id), "tidal://" + id.substring(1) + ".flc", title, artist, "", 0, 0);
+    }
+
+    private List<Track> queued(String... ids) {
+        List<TrackId> wanted = ids(ids);
+        return libraryTracks.stream().filter(t -> wanted.contains(t.id())).toList();
+    }
+
+    private ArtistEnricher enricher(dj.domain.port.ArtistInfoSource source) {
+        return new ArtistEnricher(library, source, profiles, java.time.Clock.systemUTC(), Duration.ofDays(30));
+    }
+
     private Mix mix(List<TrackId> seeds, int count) {
-        PlaybackContextPort contexts = (playerId, requestSeeds) -> {
-            PlaybackContext context = new PlaybackContext(playerId, "Test player",
-                    queue.isEmpty() ? requestSeeds : queue, LocalTime.NOON);
+        PlaybackContextPort contexts = playerId -> {
+            PlaybackContext context = new PlaybackContext(playerId, "Test player", queue, LocalTime.NOON);
             seenContext.set(context);
             return context;
         };
         CandidateScorer scorer = new CandidateScorer(profiles, ScoringWeights.DEFAULTS.withJitter(0), new Random(0));
-        MixService service = new MixService(library, similarity, scorer, llm, contexts, executor, 10, LLM_TIMEOUT);
+        MixService service = new MixService(library, similarity, scorer, llm, contexts, enricher, executor, 10,
+                LLM_TIMEOUT, seedLookupTimeout);
         return service.mix(new MixRequest(PLAYER, seeds, count));
     }
 }

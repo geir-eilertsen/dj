@@ -185,7 +185,7 @@ sub _requestMix {
 	)->get($url);
 }
 
-# Library ids of the last few tracks in the queue.
+# Ids of the last few tracks in the queue.
 sub _queueTailTrackIds {
 	my ($client) = @_;
 
@@ -195,8 +195,9 @@ sub _queueTailTrackIds {
 	return grep { defined } map { _trackId($_) } @playlist[$first .. $#playlist];
 }
 
-# The library id of a track object or URL, or undef if it isn't a library track
-# (radio, unimported streams have no positive id).
+# The LMS id of a track object or URL. Library tracks have positive ids; tracks played
+# straight from a streaming service have negative ones, which the service matches against
+# the player's queue to learn their artist.
 sub _trackId {
 	my ($track) = @_;
 
@@ -205,7 +206,7 @@ sub _trackId {
 	$track = Slim::Schema->objectForUrl($track) if !blessed($track) && Slim::Music::Info::isURL($track);
 
 	my $id = blessed($track) ? $track->id : undef;
-	return defined $id && $id =~ /^\d+$/ && $id > 0 ? $id : undef;
+	return defined $id && $id =~ /^-?\d+$/ && $id != 0 ? $id : undef;
 }
 
 sub _dstmEnabled {

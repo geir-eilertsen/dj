@@ -28,6 +28,11 @@ import java.util.concurrent.TimeoutException;
 /**
  * Decides what a player should play next.
  *
+ * <p>Seeds are the request's tracks or else the end of the player's queue, whether or not they
+ * are in the library: music played straight from a streaming service still has an artist.
+ * Seed artists without a profile are looked up on demand, waiting at most
+ * {@code seedLookupTimeout}; a slow lookup finishes in the background for later mixes.
+ *
  * <p>Candidates are always generated locally: acoustic neighbours first (when a similarity
  * source exists), then library tracks ranked by {@link CandidateScorer}. The LLM only picks and
  * orders among them, under a hard timeout; if it is slow, fails or answers with nothing usable,
@@ -45,28 +50,36 @@ public final class MixService {
     private final CandidateScorer scorer;
     private final LlmPort llm;
     private final PlaybackContextPort playbackContext;
-    private final Executor llmExecutor;
+    private final Optional<ArtistEnricher> enricher;
+    private final Executor executor;
     private final int candidatePoolSize;
     private final Duration llmTimeout;
+    private final Duration seedLookupTimeout;
 
+    /**
+     * @param enricher used to look up unknown seed artists; empty if there is no online source
+     * @param executor runs the LLM call and seed lookups so they can be abandoned on timeout
+     */
     public MixService(LibraryPort library, SimilarityPort similarity, CandidateScorer scorer, LlmPort llm,
-                      PlaybackContextPort playbackContext, Executor llmExecutor,
-                      int candidatePoolSize, Duration llmTimeout) {
+                      PlaybackContextPort playbackContext, Optional<ArtistEnricher> enricher, Executor executor,
+                      int candidatePoolSize, Duration llmTimeout, Duration seedLookupTimeout) {
         this.library = Objects.requireNonNull(library);
         this.similarity = Objects.requireNonNull(similarity);
         this.scorer = Objects.requireNonNull(scorer);
         this.llm = Objects.requireNonNull(llm);
         this.playbackContext = Objects.requireNonNull(playbackContext);
-        this.llmExecutor = Objects.requireNonNull(llmExecutor);
+        this.enricher = Objects.requireNonNull(enricher);
+        this.executor = Objects.requireNonNull(executor);
         if (candidatePoolSize < 1) {
             throw new IllegalArgumentException("candidatePoolSize must be positive");
         }
         this.candidatePoolSize = candidatePoolSize;
         this.llmTimeout = Objects.requireNonNull(llmTimeout);
+        this.seedLookupTimeout = Objects.requireNonNull(seedLookupTimeout);
     }
 
     public Mix mix(MixRequest request) {
-        PlaybackContext context = playbackContext.contextFor(request.playerId(), request.seeds());
+        PlaybackContext context = playbackContext.contextFor(request.playerId());
         List<Track> candidates = candidates(request, context);
         List<TrackId> chosen = askLlm(context, candidates, request.count());
 
@@ -81,16 +94,23 @@ public final class MixService {
         Map<TrackId, Track> byId = new HashMap<>();
         all.forEach(t -> byId.putIfAbsent(t.id(), t));
 
-        List<Track> queue = resolve(context.queue(), byId);
-        List<Track> seeds = resolve(request.seeds(), byId);
+        List<Track> queue = context.queue();
+        Map<TrackId, Track> queued = new HashMap<>();
+        queue.forEach(t -> queued.putIfAbsent(t.id(), t));
+
+        List<Track> seeds = request.seeds().stream()
+                .map(id -> byId.containsKey(id) ? byId.get(id) : queued.get(id))
+                .filter(Objects::nonNull)
+                .toList();
         if (seeds.isEmpty()) {
             seeds = queue.subList(Math.max(0, queue.size() - SEEDS_FROM_QUEUE), queue.size());
         }
+        lookUpSeedArtists(seeds);
 
         Map<TrackId, Track> pool = new LinkedHashMap<>();
         for (Track track : neighbours(request.seeds(), poolSize)) {
             if (pool.size() < poolSize && !request.seeds().contains(track.id())
-                    && !context.queue().contains(track.id())) {
+                    && !queued.containsKey(track.id())) {
                 pool.putIfAbsent(track.id(), track);
             }
         }
@@ -103,8 +123,23 @@ public final class MixService {
         return List.copyOf(pool.values());
     }
 
-    private static List<Track> resolve(List<TrackId> ids, Map<TrackId, Track> byId) {
-        return ids.stream().map(byId::get).filter(Objects::nonNull).toList();
+    private void lookUpSeedArtists(List<Track> seeds) {
+        if (enricher.isEmpty() || seeds.isEmpty()) {
+            return;
+        }
+        List<String> artists = seeds.stream().map(Track::artist).distinct().toList();
+        CompletableFuture<Void> lookup = CompletableFuture.runAsync(() -> enricher.get().ensure(artists), executor);
+        try {
+            lookup.get(seedLookupTimeout.toMillis(), TimeUnit.MILLISECONDS);
+        } catch (TimeoutException e) {
+            // Not cancelled: let it finish and cache the profiles for the next mix.
+            LOG.log(Level.INFO, "Seed artist lookup still running after {0,number,#} ms; mixing without it",
+                    seedLookupTimeout.toMillis());
+        } catch (ExecutionException e) {
+            LOG.log(Level.WARNING, "Seed artist lookup failed", e.getCause());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     private List<Track> neighbours(List<TrackId> seeds, int limit) {
@@ -121,7 +156,7 @@ public final class MixService {
             return List.of();
         }
         CompletableFuture<List<TrackId>> answer =
-                CompletableFuture.supplyAsync(() -> llm.choose(context, candidates, count), llmExecutor);
+                CompletableFuture.supplyAsync(() -> llm.choose(context, candidates, count), executor);
         try {
             List<TrackId> chosen = answer.get(llmTimeout.toMillis(), TimeUnit.MILLISECONDS);
             return chosen == null ? List.of() : chosen;

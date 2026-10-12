@@ -6,9 +6,11 @@ import java.util.List;
 /**
  * What is happening on the player right now; input for musical judgment.
  *
- * @param queue the player's queue in play order: what has played and what is still to come
+ * @param queue the player's queue in play order, as LMS reports it. Tracks played from a
+ *              streaming service rather than the library are included, with ids that don't
+ *              match any library track.
  */
-public record PlaybackContext(String playerId, String playerName, List<TrackId> queue, LocalTime timeOfDay) {
+public record PlaybackContext(String playerId, String playerName, List<Track> queue, LocalTime timeOfDay) {
 
     public PlaybackContext {
         queue = List.copyOf(queue);
