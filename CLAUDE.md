@@ -64,7 +64,12 @@ Ports (`dj.domain.port`):
 - `PlayerActivityPort`: what each player plays now, queue position, queue slices.
   Adapter `LmsPlayerActivity`.
 - `SimilarityPort`: acoustic neighbours. Stub (`NoSimilarity`); Bliss can't analyse streams.
-- `LlmPort`: reranks candidates, returning IDs only. Stub (`NoLlm`) returns nothing.
+- `LlmPort`: picks and orders candidates, returning `Pick(id, reason)`. Adapter `ClaudeLlm`
+  (Anthropic Java SDK, `claude-haiku-5-5`, effort low, **thinking disabled** - measured: thinking
+  on = 3.3-5.6 s, off = 2.1-2.8 s, same quality; JSON-schema output `{"picks":[{id,reason}]}`;
+  no SDK retries; refusal/max_tokens/errors throw -> fallback; `warmUp()` lists models at start).
+  Prompt: weekday + time, last 8 queued tracks with tags, candidate lines
+  `id | artist | title | album | year | tags | library/new`. `NoLlm` when no key.
 
 Name matching: `ArtistNames.key()` (case, accents, punctuation, "the", "&"),
 `ArtistNames.groupKey()` (side projects/line-ups, "feat.": variety rules only),
@@ -83,8 +88,9 @@ Core flow (`MixService`, settings in `MixSettings`):
    spreading. Library and discovered lists are interleaved (`DJ_DISCOVERY_SHARE` 0.4 →
    L L D L D).
 3. LLM picks by ID only under a timeout; `TrackSelection` discards unknown IDs, dedupes, caps
-   at one track per artist group per 5, tops up from candidate order.
-4. Suggestions are recorded per player for skip detection.
+   at one track per artist group per 5, tops up from candidate order. Reasons are kept only
+   for picked tracks.
+4. Suggestions (with reasons) are recorded per player for skip detection and `/why`.
 
 Background jobs (`App`): `HistoryRecorder.poll` every 10 s (logs plays after 30 s; a
 suggested track left with >15 s to go or jumped over = skip). Every 24 h: `ArtistEnricher`
@@ -93,13 +99,17 @@ top 3 for each one's 3 closest similar artists not in the library; skips namesak
 online top 20 contains none of ≥2 library songs; aborts after 5 failures in a row).
 
 HTTP API (`dj.adapter.http`): `GET /mix?player=<mac>&seed=<id,id,..>&count=<n>` →
-`{"source","tracks":[{"id","url","title","artist","album"}]}`; `GET /health`; `GET /status`.
+`{"source","tracks":[{"id","url","title","artist","album","reason"?}]}`;
+`GET /why?player=&url=` (404 if DJ gave no reason); `GET /health`; `GET /status`.
 
 Config via env vars: `LMS_URL` (`http://localhost:9000`), `DJ_PORT` (9010),
 `DJ_CANDIDATES` (50), `DJ_LLM_TIMEOUT_MS` (3000), `DJ_LIBRARY_TTL_MINUTES` (15),
 `DJ_DATA_DIR` (`data`; `/data` in Docker, volume `dj-data`), `LASTFM_API_KEY` (`.env`, never
 logged), `DJ_ENRICH_INTERVAL_HOURS` (24), `DJ_ARTIST_MAX_AGE_DAYS` (30),
-`DJ_SEED_LOOKUP_MS` (1500), `DJ_DISCOVERY_SHARE` (0.4; 0 disables discovery).
+`DJ_SEED_LOOKUP_MS` (1500), `DJ_DISCOVERY_SHARE` (0.4; 0 disables discovery),
+`ANTHROPIC_API_KEY` (`.env`; must be a **workspace-scoped** key, an unscoped one gets 400),
+`DJ_LLM_MODEL` (`claude-haiku-5-5`), `DJ_LLM_LANGUAGE` (English), `DJ_LLM_TIMEOUT_MS` (5000).
+Plugin timeout default 10 s (prefs migration 1 raised saved 5 s values).
 
 Runs in Docker next to LMS with `network_mode: host` (plugin → `http://localhost:9010`,
 service → `http://localhost:9000`).
@@ -121,10 +131,10 @@ service → `http://localhost:9000`).
 - **Next ideas:** Christmas filter (discovery found "Gnags' Julesang" in October); Spotify as
   a fallback catalogue (Spotty's JSON-RPC search behaves like an interactive menu with history:
   needs investigation); a "why this track?" endpoint showing score parts.
-- **Step 3: LLM reranking.** `OllamaLlm` (local, default) and `ClaudeLlm` (optional, API key
-  via env). Prompt with compact candidate lines (id, artist, title, album, year, tags, new or
-  library); response is a JSON list of IDs + a one-line reason each. Store reasons for
-  "why this track?".
+- **Step 3 (done):** Claude Haiku picks/orders with reasons; "Why this track?" in the DJ menu.
+  Local Ollama was dropped: the server has 3 GB RAM and no GPU. An `OllamaLlm` for a LAN
+  machine could still implement `LlmPort`. Ideas: put the reason in LMS's track info / now
+  playing; let skips and reasons feed back into the prompt.
 - **Step 4: natural-language requests** ("mellow prog for Sunday morning"): an endpoint
   plus an LMS menu item to set a per-player "mood" that biases candidates and the LLM.
   Last.fm tags give the vocabulary.
@@ -137,6 +147,8 @@ service → `http://localhost:9000`).
 - The user plays a lot straight from TIDAL (not the library): never assume seeds are library
   tracks.
 - Last.fm merges same-named artists (TNT); see the namesake guard in `Discoverer`.
+- Testing with `player=test` logs "Could not read status for test": LMS drops the connection
+  for unknown players. Harmless; real players are fine.
 - Time-of-day history is per player by the user's choice (not household-wide).
 - The user's UI is Material Skin (also used on their phone). Its section is "Apps", not
   "My Apps" (classic UI). Home screen items are per device.

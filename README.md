@@ -23,7 +23,11 @@ What it does today:
   of day.
 - Skipped suggestions count against the song (and a little against the artist).
 
-LLM reranking is still stubbed. See `CLAUDE.md` for the architecture and roadmap.
+- Claude (Haiku) picks and orders the final tracks so the music flows and fits the time of
+  day, with a one-line reason for each: see **Why this track?** in the DJ menu. Without an
+  API key, or if Claude is slow or unreachable, DJ's own ranking is used.
+
+See `CLAUDE.md` for the architecture and roadmap.
 
 ## Layout
 
@@ -115,6 +119,19 @@ and stored in SQLite, so suggestions keep working when Last.fm or the internet i
 
 Without a key the service still works, ranking by play counts and years only.
 
+### Claude
+
+Put a **workspace-scoped** Anthropic API key in `.env` (create it inside a workspace in the
+Console; an unscoped key is rejected):
+
+```
+read -rsp 'Anthropic API key: ' k && printf 'ANTHROPIC_API_KEY=%s\n' "$k" >> /home/dj/.env
+docker compose up -d
+```
+
+Each mix costs roughly $0.0005 with Claude Haiku. `DJ_LLM_MODEL`, `DJ_LLM_LANGUAGE` (reason
+language, default English) and `DJ_LLM_TIMEOUT_MS` (default 5000) tune it.
+
 ## LMS plugin
 
 ### Install
@@ -154,6 +171,8 @@ The plugin also appears as an app: **Apps → DJ → Start DJ** in Material Skin
 current song (or, on a stopped player, songs it usually plays at this time of day),
 switches off LMS's random mix, replaces the queue, starts playing and makes
 DJ the player's Don't Stop The Music mixer, so the music keeps going.
+
+**Why this track?** in the same menu shows the reason DJ gave for the song that's playing.
 
 To get a home screen button in Material Skin, long-press **Start DJ** (or use its ⋮ menu)
 and choose *Pin to home screen*.
