@@ -9,4 +9,13 @@ services:
       - TZ=Europe/Oslo
       - LMS_URL=http://localhost:9000
       - DJ_PORT=9010
+    # Secrets such as LASTFM_API_KEY live in .env (gitignored).
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - dj-data:/data
     restart: unless-stopped
+
+volumes:
+  dj-data:

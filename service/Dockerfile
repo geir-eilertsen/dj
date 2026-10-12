@@ -10,6 +10,9 @@ RUN mvn -B -q package
 FROM eclipse-temurin:21-jre
 WORKDIR /app
 COPY --from=build /build/target/dj-service.jar .
+# A new named volume mounted here starts with this ownership, so "nobody" can write the database.
+RUN mkdir /data && chown nobody /data
+ENV DJ_DATA_DIR=/data
 USER nobody
 EXPOSE 9010
 ENTRYPOINT ["java", "-jar", "/app/dj-service.jar"]

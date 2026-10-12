@@ -14,5 +14,9 @@ service/target/
 *~
 *.swp
 
-# Local secrets (API keys for future LLM adapters)
+# Local secrets (LASTFM_API_KEY, future LLM keys)
 .env
+
+# Local data (SQLite), when run outside Docker
+/data/
+service/data/
