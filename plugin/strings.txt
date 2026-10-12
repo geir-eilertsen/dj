@@ -52,3 +52,7 @@ PLUGIN_DJ_WHY_NOTHING
 PLUGIN_DJ_WHY_CHOSEN
 	EN	Why DJ chose this
 	NO	Hvorfor DJ valgte denne
+
+PLUGIN_DJ_POPUP
+	EN	DJ:
+	NO	DJ:

@@ -28,6 +28,7 @@ use constant NUM_SEED_TRACKS  => 5;
 use constant NUM_MIX_TRACKS   => 5;
 use constant NUM_START_TRACKS => 10;
 use constant REASON_TTL       => 86400 * 30;
+use constant POPUP_SECONDS    => 20;
 
 my $log = Slim::Utils::Log->addLogCategory({
 	'category'     => 'plugin.dj',
@@ -40,6 +41,9 @@ my $prefs = preferences('plugin.dj');
 # Track URL => the reason DJ gave for suggesting it, from the mix responses. Track info menus
 # are built synchronously, so they read this instead of asking the service.
 my $reasons = Slim::Utils::Cache->new('dj', 1);
+
+# Player id => URL whose reason was last shown, so a song's reason pops up once
+my %lastPopup;
 
 $prefs->init({
 	service_url => 'http://localhost:9010',
@@ -67,6 +71,9 @@ sub initPlugin {
 		before => 'contributors',
 		func   => \&trackInfoReason,
 	) );
+
+	# Pop the reason up on Now Playing when a song DJ chose starts
+	Slim::Control::Request::subscribe(\&onNewSong, [['playlist'], ['newsong']]);
 
 	$class->SUPER::initPlugin(
 		feed   => \&handleFeed,
@@ -107,6 +114,34 @@ sub handleFeed {
 			url  => \&whyThisTrack,
 		}],
 	});
+}
+
+# Material Skin shows 'info' notifications for a player as a pop-up on every Material window
+# showing that player (its send-notif command; timeout in seconds, at most 30).
+sub onNewSong {
+	my $request = shift;
+	my $client  = $request->client() || return;
+
+	return unless Slim::Utils::PluginManager->isEnabled('Plugins::MaterialSkin::Plugin');
+
+	my $song = Slim::Player::Playlist::song($client);
+	my $url  = blessed($song) ? $song->url : $song;
+	return unless $url;
+
+	# newsong can repeat for the same song (e.g. on resume): pop up once per song change
+	return if ($lastPopup{$client->id} || '') eq $url;
+	$lastPopup{$client->id} = $url;
+
+	my $reason = $reasons->get($url);
+	return unless $reason;
+
+	Slim::Control::Request::executeRequest(undef, [
+		'material-skin', 'send-notif',
+		'type:info',
+		'msg:' . cstring($client, 'PLUGIN_DJ_POPUP') . ' ' . $reason,
+		'client:' . $client->id,
+		'timeout:' . POPUP_SECONDS,
+	]);
 }
 
 # Track info item with DJ's reason for a track, if DJ suggested it with one.
