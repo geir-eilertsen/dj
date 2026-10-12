@@ -116,12 +116,12 @@ sub trackInfoReason {
 	my $reason = $url && $reasons->get($url);
 	return unless $reason;
 
-	# One labelled line ("Why DJ chose this: ..."), like Year; a folder needs an extra click
+	# One labelled line ("Why DJ chose this: ..."), like Year; a folder needs an extra click.
+	# No 'wrap': in menu mode that moves the text out of the list (Material doesn't show it).
 	return {
 		type  => 'text',
 		label => 'PLUGIN_DJ_WHY_CHOSEN',
 		name  => $reason,
-		wrap  => 1,
 	};
 }
 
