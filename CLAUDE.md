@@ -47,43 +47,59 @@ Ports (`dj.domain.port`):
 - `LibraryPort.allTracks()`: every track with year and play count, from LMS JSON-RPC
   `/jsonrpc.js` (never LMS's SQLite files). Adapter `LmsLibrary` caches a snapshot (TTL).
   `titles` has no random sort; tag `O` = play count. LMS exposes no last-played time.
-- `PlaybackContextPort`: player name + the player's whole queue. Adapter `LmsPlaybackContext`
-  (`status`, own 2 s client because it's on the mix path); falls back to request seeds.
-- `ArtistProfileStore`: offline artist profiles (tags + similar artists). Adapter
-  `SqliteArtistProfileStore` (`$DJ_DATA_DIR/dj.db`, mirrored in memory for fast reads).
-- `ArtistInfoSource`: online artist info, background only. Adapter `LastFmArtistInfo`
-  (`artist.getSimilar` + `artist.getTopTags`, 250 ms spacing, error 6 = unknown artist).
+- `PlaybackContextPort`: player name, playing or not, and the whole queue *as LMS reports it*
+  (tracks played straight from TIDAL/Spotify have negative ids but real artist/title).
+  Adapter `LmsPlaybackContext` (`status`, own 2 s client: it's on the mix path).
+- `ArtistProfileStore` / `ArtistInfoSource`: artist tags + similar artists. Adapters
+  `SqliteArtistProfileStore` (`dj.db`, mirrored in memory) and `LastFmArtistInfo`
+  (`artist.getSimilar` + `getTopTags`, 250 ms spacing, error 6 = unknown artist).
+- `TopTracksSource`: Last.fm `artist.getTopTracks` (same adapter).
+- `CatalogPort`: song → playable streaming track. Adapter `LmsTidalCatalog` searches through
+  LMS's TIDAL plugin (OPML: Search → query → Songs, `menu:1` gives "Title\nArtist"); needs a
+  player id (any connected one); exact artist + `SongTitles` match, so covers/karaoke fail.
+- `DiscoveryStore`: discovered tracks (TrackId = URL) + artists played from streaming.
+  Adapter `SqliteDiscoveryStore` (`discovery.db`, in memory).
+- `PlayHistory` / `FeedbackStore`: DJ's own listening log, suggestions and skips.
+  Adapter `SqlitePlayHistory` (`history.db`, schema v2).
+- `PlayerActivityPort`: what each player plays now, queue position, queue slices.
+  Adapter `LmsPlayerActivity`.
 - `SimilarityPort`: acoustic neighbours. Stub (`NoSimilarity`); Bliss can't analyse streams.
 - `LlmPort`: reranks candidates, returning IDs only. Stub (`NoLlm`) returns nothing.
 
-Artist names are matched via `ArtistNames.key()` (case, accents, punctuation, "the", "&").
+Name matching: `ArtistNames.key()` (case, accents, punctuation, "the", "&"),
+`ArtistNames.groupKey()` (side projects/line-ups, "feat.": variety rules only),
+`SongTitles.key()` (strips remaster/live/mix/demo/version/EP/feat. tags, keeps "(Pt.1)").
 
-Core flow (`MixService`):
-1. Context = player queue. Seeds = request seeds, else the last 5 queued tracks.
-2. Candidates = acoustic neighbours (none yet), then `CandidateScorer` over the whole library:
-   similar-artist match (either artist's profile) + tag cosine + play count + year closeness
-   + jitter; queued tracks and the same song on another service excluded; artists in the
-   last 4 queued tracks ×0.3; greedy artist spreading (×0.5 per earlier pick). Weights in
-   `ScoringWeights.DEFAULTS`.
-3. Ask the LLM to pick and order **by ID only**, under a hard timeout.
-4. `TrackSelection`: **discard any ID not in the candidate list**, drop duplicates, cap at
-   count, top up from candidate order if short.
-5. LLM slow, failing or empty → candidate order. A mix is always produced if the library
-   has tracks; missing profiles just weaken the scoring.
+Core flow (`MixService`, settings in `MixSettings`):
+1. Context from LMS. Seeds: if the player is **stopped** (Start DJ from scratch),
+   `TimeOfDaySeeds` (5 songs this player played ±90 min of now, same weekday/weekend type,
+   last 8 weeks, 14-day half-life); else request seeds (library or queue ids), else the last
+   5 queued tracks. Unknown seed artists are looked up on demand (`ArtistEnricher.ensure`,
+   max `DJ_SEED_LOOKUP_MS`); streamed artists trigger background `Discoverer.discoverAround`.
+2. `CandidateScorer` ranks the library and, separately, discovered tracks (relevance floor
+   `DISCOVERY_MIN_RELEVANCE` 0.25): similar artist + tag cosine + play count + year + jitter;
+   excludes queued songs and other versions of them, one version per song; recent artists
+   ×0.3; skip penalties (song ×0.4, artist ×0.85 per skip, 60-day half-life); artist
+   spreading. Library and discovered lists are interleaved (`DJ_DISCOVERY_SHARE` 0.4 →
+   L L D L D).
+3. LLM picks by ID only under a timeout; `TrackSelection` discards unknown IDs, dedupes, caps
+   at one track per artist group per 5, tops up from candidate order.
+4. Suggestions are recorded per player for skip detection.
 
-Background: `ArtistEnricher` runs 10 s after start and then every `DJ_ENRICH_INTERVAL_HOURS`
-when `LASTFM_API_KEY` is set. It (re)fetches library artists with no profile or one older than
-`DJ_ARTIST_MAX_AGE_DAYS`, saves "unknown" profiles too, saves under the library's spelling, and
-aborts a run after 5 failures in a row.
+Background jobs (`App`): `HistoryRecorder.poll` every 10 s (logs plays after 30 s; a
+suggested track left with >15 s to go or jumped over = skip). Every 24 h: `ArtistEnricher`
+then `Discoverer.discoverAll` (top 5 songs not in the library per library/listened artist,
+top 3 for each one's 3 closest similar artists not in the library; skips namesakes whose
+online top 20 contains none of ≥2 library songs; aborts after 5 failures in a row).
 
 HTTP API (`dj.adapter.http`): `GET /mix?player=<mac>&seed=<id,id,..>&count=<n>` →
-`{"source","tracks":[{"id","url","title","artist","album"}]}`; `GET /health`; `GET /status`
-(profile count, Last.fm configured, last enrichment result).
+`{"source","tracks":[{"id","url","title","artist","album"}]}`; `GET /health`; `GET /status`.
 
-Config via env vars: `LMS_URL` (default `http://localhost:9000`), `DJ_PORT` (9010),
+Config via env vars: `LMS_URL` (`http://localhost:9000`), `DJ_PORT` (9010),
 `DJ_CANDIDATES` (50), `DJ_LLM_TIMEOUT_MS` (3000), `DJ_LIBRARY_TTL_MINUTES` (15),
-`DJ_DATA_DIR` (`data`; `/data` in Docker, named volume `dj-data`), `LASTFM_API_KEY` (from
-`.env`, gitignored, never logged), `DJ_ENRICH_INTERVAL_HOURS` (24), `DJ_ARTIST_MAX_AGE_DAYS` (30).
+`DJ_DATA_DIR` (`data`; `/data` in Docker, volume `dj-data`), `LASTFM_API_KEY` (`.env`, never
+logged), `DJ_ENRICH_INTERVAL_HOURS` (24), `DJ_ARTIST_MAX_AGE_DAYS` (30),
+`DJ_SEED_LOOKUP_MS` (1500), `DJ_DISCOVERY_SHARE` (0.4; 0 disables discovery).
 
 Runs in Docker next to LMS with `network_mode: host` (plugin → `http://localhost:9010`,
 service → `http://localhost:9000`).
@@ -99,30 +115,29 @@ service → `http://localhost:9000`).
   plugin, changing player prefs).
 
 ## Roadmap
-- **Step 1 (done):** plugin + service skeleton, random tracks, DSTM fallback verified.
-- **Step 2 (done):** Last.fm artist similarity + tags cached in SQLite, play-count weighting,
-  queue-aware exclusion, recent-artist penalty, artist spreading. Ideas: tune weights from
-  real listening; track-level `track.getSimilar`; LMS ratings once used.
-- **"Start DJ" button (done):** the plugin is an `OPMLBased` app (`is_app`, tag `dj`); item
-  "Start DJ" (`nextWindow => 'nowPlaying'`) fetches 10 tracks seeded by the current song,
-  runs `randomplay disable`, `playlist playtracks listRef`, and sets the DSTM provider. The
-  user pinned it to the Material Skin home screen. Next: a proper icon; the menu is the
-  natural home for step 4 requests and "why this track?".
-- **Tuning:** artist spreading treats "Devin Townsend Project" and "Devin Townsend Band" as
-  different artists (4 of 10 in one mix). Consider a per-mix artist cap or grouping.
+- **Done:** step 1 skeleton; step 2 Last.fm similarity + history scoring; Start DJ button +
+  icon (`tools/Icon.java`); artist spreading/cap; song-version dedupe; following streamed
+  music; TIDAL discovery (~40%); per-player time-of-day starts; skip penalties.
+- **Next ideas:** Christmas filter (discovery found "Gnags' Julesang" in October); Spotify as
+  a fallback catalogue (Spotty's JSON-RPC search behaves like an interactive menu with history:
+  needs investigation); a "why this track?" endpoint showing score parts.
 - **Step 3: LLM reranking.** `OllamaLlm` (local, default) and `ClaudeLlm` (optional, API key
-  via env). Prompt with compact candidate lines (id, artist, title, album, year, tags);
-  response is a JSON list of IDs + a one-line reason each. Store reasons for "why this track?".
+  via env). Prompt with compact candidate lines (id, artist, title, album, year, tags, new or
+  library); response is a JSON list of IDs + a one-line reason each. Store reasons for
+  "why this track?".
 - **Step 4: natural-language requests** ("mellow prog for Sunday morning"): an endpoint
-  plus an LMS menu/CLI command to set a per-player "mood" that biases candidates and the LLM.
-  Last.fm tags give the vocabulary for matching moods/genres.
-- **Discovery mode:** suggest tracks outside the library via Spotify/TIDAL (playable URLs),
-  clearly separated from library-only mode. Last.fm similar artists not in the library are
-  already stored.
+  plus an LMS menu item to set a per-player "mood" that biases candidates and the LLM.
+  Last.fm tags give the vocabulary.
 - Local audio + bliss-analyser would make `SimilarityPort` real.
-- Observability: per-candidate score breakdown endpoint for tuning.
 
 ## Gotchas
+- Restarting LMS while discovery runs makes TIDAL searches fail; the run aborts after 5 and
+  retries those artists 10 min later / next run. Prefer restarting LMS when discovery is idle
+  (`/status` → `lastDiscovery` set).
+- The user plays a lot straight from TIDAL (not the library): never assume seeds are library
+  tracks.
+- Last.fm merges same-named artists (TNT); see the namesake guard in `Discoverer`.
+- Time-of-day history is per player by the user's choice (not household-wide).
 - The user's UI is Material Skin (also used on their phone). Its section is "Apps", not
   "My Apps" (classic UI). Home screen items are per device.
 - `!` commands in Claude Code can't prompt for a sudo password; long commands pasted into a

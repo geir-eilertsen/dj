@@ -11,10 +11,19 @@ behaviour and the music keeps playing.
 LMS ──DSTM──▶ plugin/ (Perl) ──GET /mix──▶ service/ (Java) ──JSON-RPC──▶ LMS library
 ```
 
-Status: **step 2**. The service ranks library tracks by artist similarity and style tags
-from Last.fm (cached locally), your play counts and release years, avoids what's already
-queued and spreads artists out. LLM reranking is still stubbed. See `CLAUDE.md` for the
-architecture and roadmap.
+What it does today:
+
+- Follows whatever is playing, from your library or straight from TIDAL/Spotify.
+- Ranks tracks by artist similarity and style tags from Last.fm (cached locally), your play
+  counts and release years; avoids what's queued (and other versions of it) and spreads
+  artists out.
+- Mixes in about 40% new music from TIDAL: more by your artists, and by similar artists you
+  don't have, found in the background through LMS's TIDAL plugin.
+- **Start DJ** on a stopped player starts from what that player usually plays at this time
+  of day.
+- Skipped suggestions count against the song (and a little against the artist).
+
+LLM reranking is still stubbed. See `CLAUDE.md` for the architecture and roadmap.
 
 ## Layout
 
@@ -71,8 +80,8 @@ curl 'localhost:9010/mix?player=b0:3c:dc:72:f2:72&seed=119,131&count=3'
 `source` is `llm` when the LLM chose the order and `fallback` otherwise. Without `seed`,
 the end of the player's queue is used.
 
-`GET /status` shows the number of artist profiles, whether Last.fm is configured, and the
-last enrichment result. Errors return
+`GET /status` shows the number of artist profiles and discovered tracks, whether Last.fm is
+configured, and the last enrichment and discovery results. Errors return
 `400` for a bad request, `503` if LMS can't be reached, and `{"error": "..."}` as the body.
 
 ### Configuration (environment variables)
@@ -87,7 +96,9 @@ last enrichment result. Errors return
 | `DJ_DATA_DIR` | `data` (`/data` in Docker) | Where the SQLite database lives |
 | `LASTFM_API_KEY` | (none) | Enables artist similarity and tags. Put it in `.env` |
 | `DJ_ENRICH_INTERVAL_HOURS` | `24` | How often artist info is refreshed |
-| `DJ_ARTIST_MAX_AGE_DAYS` | `30` | When an artist's info counts as stale |
+| `DJ_ARTIST_MAX_AGE_DAYS` | `30` | When artist info and discovered music count as stale |
+| `DJ_SEED_LOOKUP_MS` | `1500` | Max wait for looking up an unknown artist during a mix |
+| `DJ_DISCOVERY_SHARE` | `0.4` | Share of each mix from TIDAL discovery (0 turns it off) |
 
 ### Last.fm
 
@@ -140,7 +151,8 @@ To uninstall, remove that directory and restart LMS (or uninstall it from *Setti
 
 The plugin also appears as an app: **Apps → DJ → Start DJ** in Material Skin
 (*My Apps* in the classic web UI). One tap asks the service for 10 tracks following the
-current song, switches off LMS's random mix, replaces the queue, starts playing and makes
+current song (or, on a stopped player, songs it usually plays at this time of day),
+switches off LMS's random mix, replaces the queue, starts playing and makes
 DJ the player's Don't Stop The Music mixer, so the music keeps going.
 
 To get a home screen button in Material Skin, long-press **Start DJ** (or use its ⋮ menu)
