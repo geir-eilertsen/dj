@@ -9,7 +9,7 @@ import java.util.Optional;
 /** Service settings, read from environment variables. */
 record Config(URI lmsUrl, int port, int candidatePoolSize, Duration llmTimeout, Duration libraryTtl,
               Path dataDir, Optional<String> lastFmApiKey, Duration enrichmentInterval, Duration artistMaxAge,
-              Duration seedLookupTimeout) {
+              Duration seedLookupTimeout, double discoveryShare) {
 
     static Config fromEnv(Map<String, String> env) {
         return new Config(
@@ -22,7 +22,8 @@ record Config(URI lmsUrl, int port, int candidatePoolSize, Duration llmTimeout, 
                 Optional.ofNullable(env.get("LASTFM_API_KEY")).map(String::strip).filter(k -> !k.isEmpty()),
                 Duration.ofHours(Long.parseLong(env.getOrDefault("DJ_ENRICH_INTERVAL_HOURS", "24"))),
                 Duration.ofDays(Long.parseLong(env.getOrDefault("DJ_ARTIST_MAX_AGE_DAYS", "30"))),
-                Duration.ofMillis(Long.parseLong(env.getOrDefault("DJ_SEED_LOOKUP_MS", "1500"))));
+                Duration.ofMillis(Long.parseLong(env.getOrDefault("DJ_SEED_LOOKUP_MS", "1500"))),
+                Double.parseDouble(env.getOrDefault("DJ_DISCOVERY_SHARE", "0.4")));
     }
 
     /** Never log the API key. */
@@ -32,6 +33,6 @@ record Config(URI lmsUrl, int port, int candidatePoolSize, Duration llmTimeout, 
                 + ", llmTimeout=" + llmTimeout + ", libraryTtl=" + libraryTtl + ", dataDir=" + dataDir
                 + ", lastFm=" + (lastFmApiKey.isPresent() ? "configured" : "not configured")
                 + ", enrichmentInterval=" + enrichmentInterval + ", artistMaxAge=" + artistMaxAge
-                + ", seedLookupTimeout=" + seedLookupTimeout + "]";
+                + ", seedLookupTimeout=" + seedLookupTimeout + ", discoveryShare=" + discoveryShare + "]";
     }
 }

@@ -89,6 +89,24 @@ class LastFmArtistInfoTest {
     }
 
     @Test
+    void readsTopTracks() {
+        responses.put("artist.gettoptracks", """
+                {"toptracks":{"track":[{"name":"Bag Duggede Ruder","playcount":"100"},{"name":"Rejsen til Rom"},
+                 {"name":"  "},{"name":"De Første Kærester På Månen"}]}}""");
+
+        assertEquals(List.of("Bag Duggede Ruder", "Rejsen til Rom"), source().topTracks("TV-2", 2));
+        assertTrue(lastQuery.contains("method=artist.gettoptracks"), lastQuery);
+    }
+
+    @Test
+    void hasNoTopTracksForUnknownArtists() {
+        responses.put("artist.gettoptracks", """
+                {"error":6,"message":"The artist you supplied could not be found"}""");
+
+        assertEquals(List.of(), source().topTracks("Nobody", 5));
+    }
+
+    @Test
     void treatsUnknownArtistsAsEmpty() {
         responses.put("artist.getsimilar", """
                 {"error":6,"message":"The artist you supplied could not be found"}""");

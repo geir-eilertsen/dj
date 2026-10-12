@@ -138,6 +138,20 @@ class CandidateScorerTest {
     }
 
     @Test
+    void canLeaveOutTracksThatDoNotRelateToTheSeeds() {
+        List<Track> ranked = scorer().rank(List.of(abba, katatonia, stevenWilson, unknownArtist),
+                List.of(opethSeed), List.of(), 10, MixSettings.DISCOVERY_MIN_RELEVANCE);
+
+        // Katatonia is similar; Steven Wilson shares tags; ABBA and the unknown artist don't relate.
+        assertEquals(ids("10", "12"), Tracks.ids(ranked));
+    }
+
+    @Test
+    void leavesOutEverythingWhenThereAreNoSeedsAndARelevanceFloor() {
+        assertTrue(scorer().rank(List.of(katatonia), List.of(), List.of(), 10, 0.01).isEmpty());
+    }
+
+    @Test
     void respectsTheLimit() {
         List<Track> ranked = scorer().rank(List.of(abba, katatonia, porcupineTree), List.of(opethSeed), List.of(), 2);
 

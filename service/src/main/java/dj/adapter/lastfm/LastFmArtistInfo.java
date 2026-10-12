@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dj.domain.model.ArtistNames;
 import dj.domain.model.ArtistProfile;
 import dj.domain.port.ArtistInfoSource;
+import dj.domain.port.TopTracksSource;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -22,12 +23,12 @@ import java.util.Optional;
 import java.util.Set;
 
 /**
- * Artist tags and similar artists from the Last.fm API
- * ({@code artist.getSimilar} and {@code artist.getTopTags}).
+ * Artist tags, similar artists and top tracks from the Last.fm API
+ * ({@code artist.getSimilar}, {@code artist.getTopTags}, {@code artist.getTopTracks}).
  *
  * <p>Requests are spaced at least {@code minInterval} apart to stay well inside Last.fm's rate limits.
  */
-public class LastFmArtistInfo implements ArtistInfoSource {
+public class LastFmArtistInfo implements ArtistInfoSource, TopTracksSource {
 
     public static final URI DEFAULT_BASE_URL = URI.create("https://ws.audioscrobbler.com/2.0/");
 
@@ -75,6 +76,24 @@ public class LastFmArtistInfo implements ArtistInfoSource {
                 parseTags(tags.get(), artistName),
                 parseSimilar(similar.get()),
                 clock.instant()));
+    }
+
+    @Override
+    public List<String> topTracks(String artistName, int limit) {
+        return call("artist.gettoptracks", artistName, "&limit=" + limit)
+                .map(response -> parseTopTracks(response, limit))
+                .orElse(List.of());
+    }
+
+    static List<String> parseTopTracks(JsonNode response, int limit) {
+        List<String> titles = new ArrayList<>();
+        for (JsonNode track : asArray(response.path("toptracks").path("track"))) {
+            String name = track.path("name").asText("").strip();
+            if (!name.isEmpty() && titles.size() < limit) {
+                titles.add(name);
+            }
+        }
+        return titles;
     }
 
     static List<ArtistProfile.Tag> parseTags(JsonNode response, String artistName) {

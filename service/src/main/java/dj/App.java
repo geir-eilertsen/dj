@@ -5,12 +5,16 @@ import dj.adapter.lastfm.LastFmArtistInfo;
 import dj.adapter.lms.LmsJsonRpcClient;
 import dj.adapter.lms.LmsLibrary;
 import dj.adapter.lms.LmsPlaybackContext;
+import dj.adapter.lms.LmsTidalCatalog;
 import dj.adapter.sqlite.SqliteArtistProfileStore;
+import dj.adapter.sqlite.SqliteDiscoveryStore;
 import dj.adapter.stub.NoLlm;
 import dj.adapter.stub.NoSimilarity;
 import dj.domain.ArtistEnricher;
 import dj.domain.CandidateScorer;
+import dj.domain.Discoverer;
 import dj.domain.MixService;
+import dj.domain.MixSettings;
 import dj.domain.ScoringWeights;
 
 import java.io.IOException;
@@ -46,28 +50,41 @@ public final class App {
                 new LmsPlaybackContext(new LmsJsonRpcClient(config.lmsUrl(), Duration.ofSeconds(2)), Clock.systemDefaultZone());
         SqliteArtistProfileStore profiles = new SqliteArtistProfileStore(config.dataDir().resolve("dj.db"));
 
-        Optional<ArtistEnricher> enricher = config.lastFmApiKey().map(key -> new ArtistEnricher(
-                library, new LastFmArtistInfo(key), profiles, Clock.systemUTC(), config.artistMaxAge()));
+        SqliteDiscoveryStore discovered = new SqliteDiscoveryStore(config.dataDir().resolve("discovery.db"));
+        Optional<LastFmArtistInfo> lastFm = config.lastFmApiKey().map(LastFmArtistInfo::new);
+        Optional<ArtistEnricher> enricher = lastFm.map(source -> new ArtistEnricher(
+                library, source, profiles, Clock.systemUTC(), config.artistMaxAge()));
+        // TIDAL searches are on the background path only, so a generous timeout is fine.
+        LmsTidalCatalog tidal = new LmsTidalCatalog(new LmsJsonRpcClient(config.lmsUrl(), Duration.ofSeconds(15)));
+        Optional<Discoverer> discoverer = enricher
+                .filter(e -> config.discoveryShare() > 0)
+                .map(e -> new Discoverer(library, profiles, e, lastFm.get(), tidal, discovered, Clock.systemUTC(),
+                        config.artistMaxAge()));
 
         ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
         MixService mixService = new MixService(
                 library,
+                discovered,
                 new NoSimilarity(),
                 new CandidateScorer(profiles, ScoringWeights.DEFAULTS, new Random()),
                 new NoLlm(),
                 playbackContext,
                 enricher,
+                discoverer,
                 executor,
-                config.candidatePoolSize(),
-                config.llmTimeout(),
-                config.seedLookupTimeout());
+                new MixSettings(config.candidatePoolSize(), config.llmTimeout(), config.seedLookupTimeout(),
+                        config.discoveryShare()));
 
         AtomicReference<ArtistEnricher.Result> lastEnrichment = new AtomicReference<>();
+        AtomicReference<Discoverer.Result> lastDiscovery = new AtomicReference<>();
         MixHttpServer server = new MixHttpServer(mixService, config.port(), () -> {
             Map<String, Object> status = new LinkedHashMap<>();
             status.put("artistProfiles", profiles.size());
             status.put("lastFm", config.lastFmApiKey().isPresent());
             status.put("lastEnrichment", lastEnrichment.get());
+            status.put("discoveredTracks", discovered.allTracks().size());
+            status.put("listenedArtists", discovered.listenedArtists().size());
+            status.put("lastDiscovery", lastDiscovery.get());
             return status;
         });
         server.start();
@@ -88,6 +105,13 @@ public final class App {
                     lastEnrichment.set(enricher.get().enrich());
                 } catch (RuntimeException e) {
                     LOG.log(Level.WARNING, "Artist enrichment failed", e);
+                }
+                if (discoverer.isPresent()) {
+                    try {
+                        lastDiscovery.set(discoverer.get().discoverAll());
+                    } catch (RuntimeException e) {
+                        LOG.log(Level.WARNING, "Discovery failed", e);
+                    }
                 }
             }, 10, config.enrichmentInterval().toSeconds(), TimeUnit.SECONDS);
         } else {

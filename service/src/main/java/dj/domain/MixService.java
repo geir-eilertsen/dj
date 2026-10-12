@@ -5,6 +5,7 @@ import dj.domain.model.MixRequest;
 import dj.domain.model.PlaybackContext;
 import dj.domain.model.Track;
 import dj.domain.model.TrackId;
+import dj.domain.port.DiscoveryStore;
 import dj.domain.port.LibraryPort;
 import dj.domain.port.LlmPort;
 import dj.domain.port.PlaybackContextPort;
@@ -12,7 +13,7 @@ import dj.domain.port.SimilarityPort;
 
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
-import java.time.Duration;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -31,12 +32,15 @@ import java.util.concurrent.TimeoutException;
  * <p>Seeds are the request's tracks or else the end of the player's queue, whether or not they
  * are in the library: music played straight from a streaming service still has an artist.
  * Seed artists without a profile are looked up on demand, waiting at most
- * {@code seedLookupTimeout}; a slow lookup finishes in the background for later mixes.
+ * {@link MixSettings#seedLookupTimeout()}; a slow lookup finishes in the background for later
+ * mixes. Artists played from a streaming service also trigger background discovery.
  *
  * <p>Candidates are always generated locally: acoustic neighbours first (when a similarity
- * source exists), then library tracks ranked by {@link CandidateScorer}. The LLM only picks and
- * orders among them, under a hard timeout; if it is slow, fails or answers with nothing usable,
- * candidate order is used instead. Only a failing library prevents a mix.
+ * source exists), then library tracks and discovered tracks ranked by {@link CandidateScorer}
+ * and interleaved so about {@link MixSettings#discoveryShare()} of the mix is discovered music,
+ * when relevant discovered music exists. The LLM only picks and orders among the candidates,
+ * under a hard timeout; if it is slow, fails or answers with nothing usable, candidate order is
+ * used instead. Only a failing library prevents a mix.
  */
 public final class MixService {
 
@@ -46,36 +50,35 @@ public final class MixService {
     private static final int SEEDS_FROM_QUEUE = 5;
 
     private final LibraryPort library;
+    private final DiscoveryStore discovered;
     private final SimilarityPort similarity;
     private final CandidateScorer scorer;
     private final LlmPort llm;
     private final PlaybackContextPort playbackContext;
     private final Optional<ArtistEnricher> enricher;
+    private final Optional<Discoverer> discoverer;
     private final Executor executor;
-    private final int candidatePoolSize;
-    private final Duration llmTimeout;
-    private final Duration seedLookupTimeout;
+    private final MixSettings settings;
 
     /**
-     * @param enricher used to look up unknown seed artists; empty if there is no online source
-     * @param executor runs the LLM call and seed lookups so they can be abandoned on timeout
+     * @param enricher   looks up unknown seed artists; empty if there is no online source
+     * @param discoverer finds music around artists played from a streaming service; empty if disabled
+     * @param executor   runs the LLM call, seed lookups and discovery so they can be abandoned or left running
      */
-    public MixService(LibraryPort library, SimilarityPort similarity, CandidateScorer scorer, LlmPort llm,
-                      PlaybackContextPort playbackContext, Optional<ArtistEnricher> enricher, Executor executor,
-                      int candidatePoolSize, Duration llmTimeout, Duration seedLookupTimeout) {
+    public MixService(LibraryPort library, DiscoveryStore discovered, SimilarityPort similarity,
+                      CandidateScorer scorer, LlmPort llm, PlaybackContextPort playbackContext,
+                      Optional<ArtistEnricher> enricher, Optional<Discoverer> discoverer,
+                      Executor executor, MixSettings settings) {
         this.library = Objects.requireNonNull(library);
+        this.discovered = Objects.requireNonNull(discovered);
         this.similarity = Objects.requireNonNull(similarity);
         this.scorer = Objects.requireNonNull(scorer);
         this.llm = Objects.requireNonNull(llm);
         this.playbackContext = Objects.requireNonNull(playbackContext);
         this.enricher = Objects.requireNonNull(enricher);
+        this.discoverer = Objects.requireNonNull(discoverer);
         this.executor = Objects.requireNonNull(executor);
-        if (candidatePoolSize < 1) {
-            throw new IllegalArgumentException("candidatePoolSize must be positive");
-        }
-        this.candidatePoolSize = candidatePoolSize;
-        this.llmTimeout = Objects.requireNonNull(llmTimeout);
-        this.seedLookupTimeout = Objects.requireNonNull(seedLookupTimeout);
+        this.settings = Objects.requireNonNull(settings);
     }
 
     public Mix mix(MixRequest request) {
@@ -89,7 +92,7 @@ public final class MixService {
     }
 
     private List<Track> candidates(MixRequest request, PlaybackContext context) {
-        int poolSize = Math.max(candidatePoolSize, request.count());
+        int poolSize = Math.max(settings.candidatePoolSize(), request.count());
         List<Track> all = library.allTracks();
         Map<TrackId, Track> byId = new HashMap<>();
         all.forEach(t -> byId.putIfAbsent(t.id(), t));
@@ -106,6 +109,7 @@ public final class MixService {
             seeds = queue.subList(Math.max(0, queue.size() - SEEDS_FROM_QUEUE), queue.size());
         }
         lookUpSeedArtists(seeds);
+        discoverAroundStreamedArtists(queue, byId);
 
         Map<TrackId, Track> pool = new LinkedHashMap<>();
         for (Track track : neighbours(request.seeds(), poolSize)) {
@@ -114,13 +118,38 @@ public final class MixService {
                 pool.putIfAbsent(track.id(), track);
             }
         }
-        for (Track track : scorer.rank(all, seeds, queue, poolSize)) {
+
+        List<Track> fromLibrary = scorer.rank(all, seeds, queue, poolSize);
+        List<Track> fromDiscovery = settings.discoveryShare() > 0
+                ? scorer.rank(discovered.allTracks(), seeds, queue, poolSize, MixSettings.DISCOVERY_MIN_RELEVANCE)
+                : List.of();
+        for (Track track : interleave(fromLibrary, fromDiscovery, settings.discoveryShare())) {
             if (pool.size() == poolSize) {
                 break;
             }
             pool.putIfAbsent(track.id(), track);
         }
         return List.copyOf(pool.values());
+    }
+
+    /**
+     * Merges two ranked lists so that about {@code share} of the result comes from
+     * {@code discovered}; whichever list runs out first leaves the rest to the other.
+     * With share 0.4 the pattern is library, library, discovered, library, discovered.
+     */
+    static List<Track> interleave(List<Track> library, List<Track> discovered, double share) {
+        List<Track> merged = new ArrayList<>(library.size() + discovered.size());
+        int l = 0;
+        int d = 0;
+        for (int i = 0; l < library.size() || d < discovered.size(); i++) {
+            boolean wantDiscovered = Math.floor((i + 1) * share) > Math.floor(i * share);
+            if ((wantDiscovered && d < discovered.size()) || l >= library.size()) {
+                merged.add(discovered.get(d++));
+            } else {
+                merged.add(library.get(l++));
+            }
+        }
+        return merged;
     }
 
     private void lookUpSeedArtists(List<Track> seeds) {
@@ -130,15 +159,37 @@ public final class MixService {
         List<String> artists = seeds.stream().map(Track::artist).distinct().toList();
         CompletableFuture<Void> lookup = CompletableFuture.runAsync(() -> enricher.get().ensure(artists), executor);
         try {
-            lookup.get(seedLookupTimeout.toMillis(), TimeUnit.MILLISECONDS);
+            lookup.get(settings.seedLookupTimeout().toMillis(), TimeUnit.MILLISECONDS);
         } catch (TimeoutException e) {
             // Not cancelled: let it finish and cache the profiles for the next mix.
             LOG.log(Level.INFO, "Seed artist lookup still running after {0,number,#} ms; mixing without it",
-                    seedLookupTimeout.toMillis());
+                    settings.seedLookupTimeout().toMillis());
         } catch (ExecutionException e) {
             LOG.log(Level.WARNING, "Seed artist lookup failed", e.getCause());
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+        }
+    }
+
+    /** Fire and forget: results are stored for later mixes. */
+    private void discoverAroundStreamedArtists(List<Track> queue, Map<TrackId, Track> library) {
+        if (discoverer.isEmpty()) {
+            return;
+        }
+        List<String> streamed = queue.stream()
+                .filter(t -> !library.containsKey(t.id()))
+                .map(Track::artist)
+                .filter(a -> !a.isBlank())
+                .distinct()
+                .toList();
+        if (!streamed.isEmpty()) {
+            executor.execute(() -> {
+                try {
+                    discoverer.get().discoverAround(streamed);
+                } catch (RuntimeException e) {
+                    LOG.log(Level.WARNING, "Discovery around " + streamed + " failed", e);
+                }
+            });
         }
     }
 
@@ -158,11 +209,12 @@ public final class MixService {
         CompletableFuture<List<TrackId>> answer =
                 CompletableFuture.supplyAsync(() -> llm.choose(context, candidates, count), executor);
         try {
-            List<TrackId> chosen = answer.get(llmTimeout.toMillis(), TimeUnit.MILLISECONDS);
+            List<TrackId> chosen = answer.get(settings.llmTimeout().toMillis(), TimeUnit.MILLISECONDS);
             return chosen == null ? List.of() : chosen;
         } catch (TimeoutException e) {
             answer.cancel(true);
-            LOG.log(Level.WARNING, "LLM did not answer within {0,number,#} ms; using candidate order", llmTimeout.toMillis());
+            LOG.log(Level.WARNING, "LLM did not answer within {0,number,#} ms; using candidate order",
+                    settings.llmTimeout().toMillis());
         } catch (ExecutionException e) {
             LOG.log(Level.WARNING, "LLM failed; using candidate order", e.getCause());
         } catch (InterruptedException e) {

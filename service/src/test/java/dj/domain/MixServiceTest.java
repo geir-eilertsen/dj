@@ -44,6 +44,9 @@ class MixServiceTest {
     private List<Track> queue = List.of();
     private Optional<ArtistEnricher> enricher = Optional.empty();
     private Duration seedLookupTimeout = Duration.ofSeconds(1);
+    private final InMemoryDiscoveryStore discovered = new InMemoryDiscoveryStore();
+    private Optional<Discoverer> discoverer = Optional.empty();
+    private double discoveryShare = 0.4;
     private final InMemoryProfileStore profiles = new InMemoryProfileStore();
     private SimilarityPort similarity = (seeds, limit) -> List.of();
     private LlmPort llm = (context, candidates, count) -> List.of();
@@ -284,6 +287,70 @@ class MixServiceTest {
         assertEquals(2, mix.tracks().size());
     }
 
+    @Test
+    void mixesInRelevantDiscoveredMusic() {
+        useDanishLibrary();
+        libraryTracks = new ArrayList<>(libraryTracks);
+        libraryTracks.add(Tracks.track("4", "Gasolin'", 1976, 1));
+        libraryTracks.add(Tracks.track("5", "Gasolin'", 1977, 1));
+        profiles.with("Kim Larsen", List.of("danish", "rock"), "Gasolin':0.9", "TV-2:0.8", "Shu-bi-dua:0.7");
+        discovered.save("TV-2", List.of(streamed("-200", "TV-2", "Bag Duggede Ruder")), Instant.EPOCH);
+        discovered.save("Shu-bi-dua", List.of(streamed("-201", "Shu-bi-dua", "Den Røde Tråd")), Instant.EPOCH);
+        discovered.save("ABBA", List.of(streamed("-202", "ABBA", "Waterloo")), Instant.EPOCH);
+        queue = List.of(streamed("-100", "Kim Larsen", "Sommer"));
+
+        Mix mix = mix(List.of(), 5);
+
+        // 2 of 5 discovered; ABBA doesn't relate to Kim Larsen; one track per artist.
+        List<String> artists = mix.tracks().stream().map(Track::artist).toList();
+        assertEquals(List.of("Gasolin'", "TV-2", "Shu-bi-dua", "Opeth", "TOOL"), artists);
+    }
+
+    @Test
+    void leavesDiscoveredMusicOutWhenTheShareIsZero() {
+        useDanishLibrary();
+        profiles.with("Kim Larsen", List.of("danish"), "TV-2:0.8");
+        discovered.save("TV-2", List.of(streamed("-200", "TV-2", "Bag Duggede Ruder")), Instant.EPOCH);
+        queue = List.of(streamed("-100", "Kim Larsen", "Sommer"));
+        discoveryShare = 0;
+
+        Mix mix = mix(List.of(), 3);
+
+        assertTrue(mix.tracks().stream().noneMatch(t -> t.artist().equals("TV-2")));
+    }
+
+    @Test
+    void startsDiscoveryAroundArtistsPlayedFromAStreamingService() throws Exception {
+        useDanishLibrary();
+        java.util.concurrent.CountDownLatch asked = new java.util.concurrent.CountDownLatch(1);
+        List<String> askedFor = new java.util.concurrent.CopyOnWriteArrayList<>();
+        ArtistEnricher noLookups = enricher(name -> Optional.empty());
+        discoverer = Optional.of(new Discoverer(library, profiles, noLookups, (artist, limit) -> {
+            askedFor.add(artist);
+            asked.countDown();
+            return List.of();
+        }, (artist, title) -> Optional.empty(), discovered, java.time.Clock.systemUTC(), Duration.ofDays(30)));
+        queue = List.of(queued("2").getFirst(), streamed("-100", "Kim Larsen", "Sommer"));
+
+        mix(List.of(), 1);
+
+        assertTrue(asked.await(2, java.util.concurrent.TimeUnit.SECONDS));
+        assertEquals(List.of("Kim Larsen"), discovered.listenedArtists());
+        assertEquals("Kim Larsen", askedFor.getFirst());
+    }
+
+    @Test
+    void interleavesLibraryAndDiscoveredTracks() {
+        List<Track> lib = tracks("l1", "l2", "l3", "l4", "l5", "l6");
+        List<Track> disc = tracks("d1", "d2", "d3");
+
+        assertEquals(ids("l1", "l2", "d1", "l3", "d2", "l4", "l5", "d3", "l6"),
+                ids(MixService.interleave(lib, disc, 0.4)));
+        assertEquals(ids("l1", "l2", "d1", "l3", "l4", "l5", "l6"), ids(MixService.interleave(lib, tracks("d1"), 0.4)));
+        assertEquals(ids("d1", "d2", "d3"), ids(MixService.interleave(List.of(), disc, 0.4)));
+        assertEquals(ids(lib), ids(MixService.interleave(lib, disc, 0)).subList(0, 6));
+    }
+
     /** Gasolin' (Kim Larsen's band) plus two much more played metal bands. */
     private void useDanishLibrary() {
         libraryTracks = List.of(Tracks.track("1", "Gasolin'", 1975, 1),
@@ -310,8 +377,8 @@ class MixServiceTest {
             return context;
         };
         CandidateScorer scorer = new CandidateScorer(profiles, ScoringWeights.DEFAULTS.withJitter(0), new Random(0));
-        MixService service = new MixService(library, similarity, scorer, llm, contexts, enricher, executor, 10,
-                LLM_TIMEOUT, seedLookupTimeout);
+        MixService service = new MixService(library, discovered, similarity, scorer, llm, contexts, enricher,
+                discoverer, executor, new MixSettings(10, LLM_TIMEOUT, seedLookupTimeout, discoveryShare));
         return service.mix(new MixRequest(PLAYER, seeds, count));
     }
 }

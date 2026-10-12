@@ -39,13 +39,23 @@ public final class CandidateScorer {
     }
 
     /**
-     * @param library all library tracks
+     * @param library the tracks to rank (the library, or discovered tracks)
      * @param seeds   tracks to follow, oldest first (may be empty)
      * @param queue   everything currently in the player's queue, in order (may be empty)
      * @param limit   maximum number of candidates
      * @return candidates, best first
      */
     public List<Track> rank(Collection<Track> library, List<Track> seeds, List<Track> queue, int limit) {
+        return rank(library, seeds, queue, limit, Double.NEGATIVE_INFINITY);
+    }
+
+    /**
+     * Like {@link #rank(Collection, List, List, int)}, but only tracks whose artist relates to
+     * the seeds (similar-artist and tag score at least {@code minRelevance}) are returned. Used
+     * for discovered music, which should only appear when it fits.
+     */
+    public List<Track> rank(Collection<Track> library, List<Track> seeds, List<Track> queue, int limit,
+                            double minRelevance) {
         SeedProfile seed = seedProfile(seeds);
         Set<String> queuedSongs = new HashSet<>();
         Set<TrackId> queuedIds = new HashSet<>();
@@ -69,6 +79,9 @@ public final class CandidateScorer {
             String artist = ArtistNames.key(track.artist());
             String group = ArtistNames.groupKey(track.artist());
             double score = artistScores.computeIfAbsent(artist, a -> artistScore(seed, a));
+            if (score < minRelevance) {
+                continue;
+            }
             score += weights.plays() * (maxPlays > 0 ? Math.log1p(track.playCount()) / maxPlays : 0);
             score += weights.year() * yearCloseness(seed.year, track.year());
             score += weights.jitter() * random.nextDouble();
