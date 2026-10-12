@@ -73,6 +73,11 @@ public final class App {
                 .map(e -> new Discoverer(library, profiles, e, lastFm.get(), tidal, discovered, Clock.systemUTC(),
                         config.artistMaxAge()));
 
+        Optional<ClaudeLlm> claude = config.anthropicApiKey().map(key -> new ClaudeLlm(
+                key, config.llmModel(), config.llmLanguage(), config.llmTimeout().plusMillis(500), profiles));
+        claude.ifPresent(c -> Thread.startVirtualThread(c::warmUp));
+        LlmPort llm = claude.<LlmPort>map(c -> c).orElseGet(NoLlm::new);
+
         ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
         MixService mixService = new MixService(
                 library,
@@ -82,10 +87,7 @@ public final class App {
                     Instant now = Instant.now();
                     return SkipPenalties.from(history.skipsSince(now.minus(SkipPenalties.MEMORY)), now);
                 }),
-                config.anthropicApiKey()
-                        .<LlmPort>map(key -> new ClaudeLlm(key, config.llmModel(), config.llmLanguage(),
-                                config.llmTimeout().plusMillis(500), profiles))
-                        .orElseGet(NoLlm::new),
+                llm,
                 playbackContext,
                 enricher,
                 discoverer,

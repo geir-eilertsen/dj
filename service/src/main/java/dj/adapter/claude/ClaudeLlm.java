@@ -9,6 +9,7 @@ import com.anthropic.models.messages.MessageCreateParams;
 import com.anthropic.models.messages.OutputConfig;
 import com.anthropic.models.messages.StopReason;
 import com.anthropic.models.messages.TextBlock;
+import com.anthropic.models.messages.ThinkingConfigDisabled;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dj.domain.model.ArtistProfile;
@@ -20,6 +21,8 @@ import dj.domain.port.ArtistProfileStore;
 import dj.domain.port.LlmPort;
 
 import java.io.IOException;
+import java.lang.System.Logger;
+import java.lang.System.Logger.Level;
 import java.time.Duration;
 import java.time.format.TextStyle;
 import java.util.ArrayList;
@@ -30,6 +33,10 @@ import java.util.stream.Collectors;
 
 /**
  * Asks Claude to pick and order tracks from the candidates, with a one-line reason each.
+ *
+ * <p>Thinking is off: measured on this workload, it doubled the output tokens and pushed calls
+ * past the mix deadline (3.3-5.6 s versus 2.2-2.8 s) without better picks. There are no tool
+ * calls, so disabled thinking's known failure modes don't apply.
  *
  * <p>Claude sees only what's needed for musical judgment: time and weekday, the end of the queue,
  * and compact candidate lines with style tags. It answers with candidate ids in a JSON schema;
@@ -63,6 +70,7 @@ public class ClaudeLlm implements LlmPort {
             upbeat". Write the reasons in %s.
             """;
 
+    private static final Logger LOG = System.getLogger(ClaudeLlm.class.getName());
     private static final ObjectMapper JSON = new ObjectMapper();
 
     private static final JsonOutputFormat PICKS_FORMAT = JsonOutputFormat.builder()
@@ -103,12 +111,27 @@ public class ClaudeLlm implements LlmPort {
         this.profiles = profiles;
     }
 
+    /**
+     * Opens the connection and loads the SDK ahead of the first mix, which otherwise pays for
+     * both and misses its deadline. Lists models: no tokens, no cost. Never throws.
+     */
+    public void warmUp() {
+        try {
+            long start = System.nanoTime();
+            client.models().list();
+            LOG.log(Level.INFO, "Claude connection ready in {0,number,#} ms", (System.nanoTime() - start) / 1_000_000);
+        } catch (RuntimeException e) {
+            LOG.log(Level.WARNING, "Could not reach the Claude API yet; mixes fall back until it answers", e);
+        }
+    }
+
     @Override
     public List<Pick> choose(PlaybackContext context, List<Track> candidates, int count) {
         MessageCreateParams params = MessageCreateParams.builder()
                 .model(model)
                 .maxTokens(16000L)
                 .system(SYSTEM_PROMPT.formatted(language))
+                .thinking(ThinkingConfigDisabled.builder().build())
                 .outputConfig(OutputConfig.builder()
                         .effort(OutputConfig.Effort.LOW)
                         .format(PICKS_FORMAT)
@@ -116,7 +139,10 @@ public class ClaudeLlm implements LlmPort {
                 .addUserMessage(userMessage(context, candidates, count))
                 .build();
 
+        long start = System.nanoTime();
         Message response = client.messages().create(params);
+        LOG.log(Level.INFO, "Claude answered in {0,number,#} ms ({1,number,#} tokens in, {2,number,#} out)",
+                (System.nanoTime() - start) / 1_000_000, response.usage().inputTokens(), response.usage().outputTokens());
         StopReason stop = response.stopReason().orElse(null);
         if (StopReason.REFUSAL.equals(stop)) {
             throw new IllegalStateException("Claude declined to choose: " + response.stopDetails().orElse(null));
