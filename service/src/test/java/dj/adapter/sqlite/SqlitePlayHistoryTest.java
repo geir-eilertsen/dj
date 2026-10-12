@@ -38,6 +38,30 @@ class SqlitePlayHistoryTest {
     }
 
     @Test
+    void remembersSuggestionsPerPlayer() {
+        SqlitePlayHistory history = new SqlitePlayHistory(dir.resolve("history.db"));
+        history.recordSuggested("p1", List.of(play("p1", T, "Sommer").track()), T);
+
+        assertEquals(true, history.wasSuggested("p1", "tidal://Sommer", T.minusSeconds(60)));
+        assertEquals(false, history.wasSuggested("p2", "tidal://Sommer", T.minusSeconds(60)));
+        assertEquals(false, history.wasSuggested("p1", "tidal://Sommer", T.plusSeconds(60)));
+    }
+
+    @Test
+    void storesSkips() {
+        SqlitePlayHistory history = new SqlitePlayHistory(dir.resolve("history.db"));
+        Track sommer = play("p1", T, "Sommer").track();
+        history.recordSkip(new dj.domain.model.Skip("p1", T, sommer));
+        history.recordSkip(new dj.domain.model.Skip("p2", T.minusSeconds(3600), sommer));
+
+        List<dj.domain.model.Skip> skips = new SqlitePlayHistory(dir.resolve("history.db")).skipsSince(T.minusSeconds(60));
+
+        assertEquals(1, skips.size());
+        assertEquals("Kim Larsen", skips.getFirst().track().artist());
+        assertEquals("tidal://Sommer", skips.getFirst().track().url());
+    }
+
+    @Test
     void knowsTheLastPlay() {
         SqlitePlayHistory history = new SqlitePlayHistory(dir.resolve("history.db"));
         history.record(play("p1", T, "Frakken"));

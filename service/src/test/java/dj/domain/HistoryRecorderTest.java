@@ -23,8 +23,21 @@ class HistoryRecorderTest {
 
     private final InMemoryPlayHistory history = new InMemoryPlayHistory();
     private final MutableClock clock = new MutableClock();
+    private final InMemoryFeedbackStore feedback = new InMemoryFeedbackStore();
     private List<NowPlaying> nowPlaying = List.of();
-    private final HistoryRecorder recorder = new HistoryRecorder(() -> nowPlaying, history, clock);
+    private List<Track> queue = List.of();
+    private final dj.domain.port.PlayerActivityPort players = new dj.domain.port.PlayerActivityPort() {
+        @Override
+        public List<NowPlaying> nowPlaying() {
+            return nowPlaying;
+        }
+
+        @Override
+        public List<Track> queueSlice(String playerId, int from, int to) {
+            return queue.subList(from, to);
+        }
+    };
+    private final HistoryRecorder recorder = new HistoryRecorder(players, history, feedback, clock);
 
     private final Track song = track("1", "Kim Larsen");
     private final Track next = track("2", "Gasolin'");
@@ -69,7 +82,7 @@ class HistoryRecorderTest {
 
     @Test
     void ignoresPausedPlayersAndCountsShortTracksAtHalfway() {
-        nowPlaying = List.of(new NowPlaying("p1", false, song, 100, 240), new NowPlaying("p2", true, next, 21, 40));
+        nowPlaying = List.of(new NowPlaying("p1", false, song, 0, 100, 240), new NowPlaying("p2", true, next, 0, 21, 40));
         recorder.poll();
 
         assertEquals(List.of("p2"), history.plays.stream().map(Play::playerId).toList());
@@ -79,7 +92,7 @@ class HistoryRecorderTest {
     void doesNotLogAPlayAgainAfterARestart() {
         playing("p1", song, 40, 240);
         recorder.poll();
-        HistoryRecorder restarted = new HistoryRecorder(() -> nowPlaying, history, clock);
+        HistoryRecorder restarted = new HistoryRecorder(players, history, feedback, clock);
         clock.advance(30);
         playing("p1", song, 70, 240);
 
@@ -89,10 +102,87 @@ class HistoryRecorderTest {
     }
 
     @Test
+    void noticesASkippedSuggestion() {
+        feedback.recordSuggested("p1", List.of(song), T0);
+        playing("p1", song, 3, 20, 240);
+        recorder.poll();
+        clock.advance(10);
+        playing("p1", next, 4, 2, 200);
+
+        recorder.poll();
+
+        assertEquals(List.of(song), feedback.skips.stream().map(dj.domain.model.Skip::track).toList());
+    }
+
+    @Test
+    void aSuggestionPlayedToTheEndIsNotASkip() {
+        feedback.recordSuggested("p1", List.of(song), T0);
+        playing("p1", song, 3, 225, 240);
+        recorder.poll();
+        clock.advance(10);
+        playing("p1", next, 4, 1, 200);
+
+        recorder.poll();
+
+        assertTrue(feedback.skips.isEmpty());
+    }
+
+    @Test
+    void onlySuggestionsCountAsSkips() {
+        playing("p1", song, 3, 20, 240);
+        recorder.poll();
+        clock.advance(10);
+        playing("p1", next, 4, 2, 200);
+
+        recorder.poll();
+
+        assertTrue(feedback.skips.isEmpty(), "the listener chose that track themselves");
+    }
+
+    @Test
+    void tracksJumpedOverBetweenLooksAreSkipped() {
+        Track jumpedOver = track("9", "TV-2");
+        feedback.recordSuggested("p1", List.of(jumpedOver), T0);
+        queue = List.of(track("a"), track("b"), track("c"), song, jumpedOver, next);
+        playing("p1", song, 3, 225, 240);
+        recorder.poll();
+        clock.advance(10);
+        playing("p1", next, 5, 1, 200);
+
+        recorder.poll();
+
+        assertEquals(List.of(jumpedOver), feedback.skips.stream().map(dj.domain.model.Skip::track).toList());
+    }
+
+    @Test
+    void goingBackOrStartingANewQueueIsNotASkip() {
+        feedback.recordSuggested("p1", List.of(song, next), T0);
+        playing("p1", song, 3, 20, 240);
+        recorder.poll();
+        clock.advance(10);
+        playing("p1", next, 2, 2, 200);
+        recorder.poll();
+        clock.advance(10);
+        playing("p1", song, 0, 2, 240);
+
+        recorder.poll();
+
+        assertTrue(feedback.skips.isEmpty());
+    }
+
+    @Test
     void keepsGoingWhenLmsCannotBeAsked() {
-        HistoryRecorder failing = new HistoryRecorder(() -> {
-            throw new IllegalStateException("LMS down");
-        }, history, clock);
+        HistoryRecorder failing = new HistoryRecorder(new dj.domain.port.PlayerActivityPort() {
+            @Override
+            public List<NowPlaying> nowPlaying() {
+                throw new IllegalStateException("LMS down");
+            }
+
+            @Override
+            public List<Track> queueSlice(String playerId, int from, int to) {
+                throw new IllegalStateException("LMS down");
+            }
+        }, history, feedback, clock);
 
         failing.poll();
 
@@ -100,7 +190,11 @@ class HistoryRecorderTest {
     }
 
     private void playing(String player, Track track, double elapsed, double duration) {
-        nowPlaying = new ArrayList<>(List.of(new NowPlaying(player, true, track, elapsed, duration)));
+        playing(player, track, 0, elapsed, duration);
+    }
+
+    private void playing(String player, Track track, int index, double elapsed, double duration) {
+        nowPlaying = new ArrayList<>(List.of(new NowPlaying(player, true, track, index, elapsed, duration)));
     }
 
     private static final class MutableClock extends Clock {

@@ -49,6 +49,7 @@ class MixServiceTest {
     private double discoveryShare = 0.4;
     private boolean playing = true;
     private final InMemoryPlayHistory history = new InMemoryPlayHistory();
+    private final InMemoryFeedbackStore feedback = new InMemoryFeedbackStore();
     private final InMemoryProfileStore profiles = new InMemoryProfileStore();
     private SimilarityPort similarity = (seeds, limit) -> List.of();
     private LlmPort llm = (context, candidates, count) -> List.of();
@@ -65,6 +66,15 @@ class MixServiceTest {
 
         assertEquals(3, mix.tracks().size());
         assertEquals(Mix.Source.FALLBACK, mix.source());
+    }
+
+    @Test
+    void remembersWhatItSuggestedToWhichPlayer() {
+        Mix mix = mix(List.of(), 2);
+
+        assertEquals(mix.tracks().stream().map(Track::url).toList(),
+                feedback.suggestions.stream().map(InMemoryFeedbackStore.Suggestion::url).toList());
+        assertTrue(feedback.suggestions.stream().allMatch(s -> s.playerId().equals(PLAYER)));
     }
 
     @Test
@@ -406,7 +416,8 @@ class MixServiceTest {
         };
         CandidateScorer scorer = new CandidateScorer(profiles, ScoringWeights.DEFAULTS.withJitter(0), new Random(0));
         MixService service = new MixService(library, discovered, similarity, scorer, llm, contexts, enricher,
-                discoverer, new TimeOfDaySeeds(history, java.time.Clock.systemDefaultZone(), new Random(0)), executor,
+                discoverer, new TimeOfDaySeeds(history, java.time.Clock.systemDefaultZone(), new Random(0)), feedback,
+                java.time.Clock.systemUTC(), executor,
                 new MixSettings(10, LLM_TIMEOUT, seedLookupTimeout, discoveryShare));
         return service.mix(new MixRequest(PLAYER, seeds, count));
     }

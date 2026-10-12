@@ -152,6 +152,35 @@ class CandidateScorerTest {
     }
 
     @Test
+    void ranksSkippedSongsAndArtistsLower() {
+        java.time.Instant now = java.time.Instant.parse("2026-10-12T12:00:00Z");
+        SkipPenalties skipped = SkipPenalties.from(List.of(
+                new dj.domain.model.Skip("p1", now.minusSeconds(3600), katatonia)), now);
+        Track otherKatatonia = track("15", "Katatonia", 2006, 0);
+        CandidateScorer scorer = new CandidateScorer(profiles, ScoringWeights.DEFAULTS.withJitter(0), new Random(0),
+                () -> skipped);
+
+        List<Track> ranked = scorer.rank(List.of(katatonia, otherKatatonia, porcupineTree), List.of(opethSeed), List.of(), 3);
+
+        // The skipped song drops to last; one skip only dents the artist, so its other song still leads.
+        assertEquals(ids("15", "11", "10"), Tracks.ids(ranked));
+    }
+
+    @Test
+    void oldSkipsFade() {
+        java.time.Instant now = java.time.Instant.parse("2026-10-12T12:00:00Z");
+        SkipPenalties fresh = SkipPenalties.from(List.of(new dj.domain.model.Skip("p1", now, katatonia)), now);
+        SkipPenalties old = SkipPenalties.from(List.of(new dj.domain.model.Skip("p1", now.minus(java.time.Duration.ofDays(120)), katatonia)), now);
+
+        double freshFactor = fresh.factor(katatonia, ScoringWeights.DEFAULTS);
+        double oldFactor = old.factor(katatonia, ScoringWeights.DEFAULTS);
+
+        assertEquals(0.4 * 0.85, freshFactor, 1e-9);
+        assertTrue(oldFactor > 0.75, "a four-month-old skip barely counts: " + oldFactor);
+        assertEquals(1.0, SkipPenalties.NONE.factor(katatonia, ScoringWeights.DEFAULTS));
+    }
+
+    @Test
     void respectsTheLimit() {
         List<Track> ranked = scorer().rank(List.of(abba, katatonia, porcupineTree), List.of(opethSeed), List.of(), 2);
 

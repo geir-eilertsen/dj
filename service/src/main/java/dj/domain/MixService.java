@@ -6,6 +6,7 @@ import dj.domain.model.PlaybackContext;
 import dj.domain.model.Track;
 import dj.domain.model.TrackId;
 import dj.domain.port.DiscoveryStore;
+import dj.domain.port.FeedbackStore;
 import dj.domain.port.LibraryPort;
 import dj.domain.port.LlmPort;
 import dj.domain.port.PlaybackContextPort;
@@ -13,6 +14,7 @@ import dj.domain.port.SimilarityPort;
 
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
+import java.time.Clock;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -60,6 +62,8 @@ public final class MixService {
     private final Optional<ArtistEnricher> enricher;
     private final Optional<Discoverer> discoverer;
     private final TimeOfDaySeeds timeOfDaySeeds;
+    private final FeedbackStore feedback;
+    private final Clock clock;
     private final Executor executor;
     private final MixSettings settings;
 
@@ -71,7 +75,8 @@ public final class MixService {
     public MixService(LibraryPort library, DiscoveryStore discovered, SimilarityPort similarity,
                       CandidateScorer scorer, LlmPort llm, PlaybackContextPort playbackContext,
                       Optional<ArtistEnricher> enricher, Optional<Discoverer> discoverer,
-                      TimeOfDaySeeds timeOfDaySeeds, Executor executor, MixSettings settings) {
+                      TimeOfDaySeeds timeOfDaySeeds, FeedbackStore feedback, Clock clock,
+                      Executor executor, MixSettings settings) {
         this.library = Objects.requireNonNull(library);
         this.discovered = Objects.requireNonNull(discovered);
         this.similarity = Objects.requireNonNull(similarity);
@@ -81,6 +86,8 @@ public final class MixService {
         this.enricher = Objects.requireNonNull(enricher);
         this.discoverer = Objects.requireNonNull(discoverer);
         this.timeOfDaySeeds = Objects.requireNonNull(timeOfDaySeeds);
+        this.feedback = Objects.requireNonNull(feedback);
+        this.clock = Objects.requireNonNull(clock);
         this.executor = Objects.requireNonNull(executor);
         this.settings = Objects.requireNonNull(settings);
     }
@@ -92,7 +99,17 @@ public final class MixService {
 
         List<Track> tracks = TrackSelection.select(candidates, chosen, request.count());
         Mix.Source source = TrackSelection.anyValid(candidates, chosen) ? Mix.Source.LLM : Mix.Source.FALLBACK;
+        rememberSuggested(request.playerId(), tracks);
         return new Mix(tracks, source);
+    }
+
+    /** So skips of these tracks can be noticed; failing to remember must not fail the mix. */
+    private void rememberSuggested(String playerId, List<Track> tracks) {
+        try {
+            feedback.recordSuggested(playerId, tracks, clock.instant());
+        } catch (RuntimeException e) {
+            LOG.log(Level.WARNING, "Could not remember suggestions for " + playerId, e);
+        }
     }
 
     private List<Track> candidates(MixRequest request, PlaybackContext context) {

@@ -19,6 +19,7 @@ import dj.domain.HistoryRecorder;
 import dj.domain.MixService;
 import dj.domain.MixSettings;
 import dj.domain.ScoringWeights;
+import dj.domain.SkipPenalties;
 import dj.domain.TimeOfDaySeeds;
 
 import java.io.IOException;
@@ -26,6 +27,7 @@ import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
 import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -57,7 +59,8 @@ public final class App {
         SqliteDiscoveryStore discovered = new SqliteDiscoveryStore(config.dataDir().resolve("discovery.db"));
         SqlitePlayHistory history = new SqlitePlayHistory(config.dataDir().resolve("history.db"));
         HistoryRecorder recorder = new HistoryRecorder(
-                new LmsPlayerActivity(new LmsJsonRpcClient(config.lmsUrl(), Duration.ofSeconds(5))), history, Clock.systemUTC());
+                new LmsPlayerActivity(new LmsJsonRpcClient(config.lmsUrl(), Duration.ofSeconds(5))), history, history,
+                Clock.systemUTC());
         Optional<LastFmArtistInfo> lastFm = config.lastFmApiKey().map(LastFmArtistInfo::new);
         Optional<ArtistEnricher> enricher = lastFm.map(source -> new ArtistEnricher(
                 library, source, profiles, Clock.systemUTC(), config.artistMaxAge()));
@@ -73,12 +76,17 @@ public final class App {
                 library,
                 discovered,
                 new NoSimilarity(),
-                new CandidateScorer(profiles, ScoringWeights.DEFAULTS, new Random()),
+                new CandidateScorer(profiles, ScoringWeights.DEFAULTS, new Random(), () -> {
+                    Instant now = Instant.now();
+                    return SkipPenalties.from(history.skipsSince(now.minus(SkipPenalties.MEMORY)), now);
+                }),
                 new NoLlm(),
                 playbackContext,
                 enricher,
                 discoverer,
                 new TimeOfDaySeeds(history, Clock.systemDefaultZone(), new Random()),
+                history,
+                Clock.systemUTC(),
                 executor,
                 new MixSettings(config.candidatePoolSize(), config.llmTimeout(), config.seedLookupTimeout(),
                         config.discoveryShare()));
@@ -107,7 +115,7 @@ public final class App {
         });
 
         ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(2);
-        scheduler.scheduleWithFixedDelay(recorder::poll, 15, 30, TimeUnit.SECONDS);
+        scheduler.scheduleWithFixedDelay(recorder::poll, 15, 10, TimeUnit.SECONDS);
         if (enricher.isPresent()) {
             scheduler.scheduleWithFixedDelay(() -> {
                 try {

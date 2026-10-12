@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Supplier;
 import java.util.random.RandomGenerator;
 
 /**
@@ -23,19 +24,28 @@ import java.util.random.RandomGenerator;
  *
  * <p>Each track is scored on similar-artist match, style-tag overlap, play count, year closeness
  * and a little noise. Tracks already in the queue (or the same song from another service) are
- * excluded; artists heard in the last few tracks are penalised; and the final order is spread
- * across artists so the top of the list isn't one artist's discography.
+ * excluded; artists heard in the last few tracks and recently skipped songs and artists are
+ * penalised; and the final order is spread across artists so the top of the list isn't one
+ * artist's discography.
  */
 public final class CandidateScorer {
 
     private final ArtistProfileStore profiles;
     private final ScoringWeights weights;
     private final RandomGenerator random;
+    private final Supplier<SkipPenalties> skips;
 
     public CandidateScorer(ArtistProfileStore profiles, ScoringWeights weights, RandomGenerator random) {
+        this(profiles, weights, random, () -> SkipPenalties.NONE);
+    }
+
+    /** @param skips the current skip penalties, asked for once per ranking */
+    public CandidateScorer(ArtistProfileStore profiles, ScoringWeights weights, RandomGenerator random,
+                           Supplier<SkipPenalties> skips) {
         this.profiles = Objects.requireNonNull(profiles);
         this.weights = Objects.requireNonNull(weights);
         this.random = Objects.requireNonNull(random);
+        this.skips = Objects.requireNonNull(skips);
     }
 
     /**
@@ -70,6 +80,7 @@ public final class CandidateScorer {
         Set<String> recentArtists = recentArtists(queue.isEmpty() ? seeds : queue);
         double maxPlays = Math.log1p(library.stream().mapToInt(Track::playCount).max().orElse(0));
 
+        SkipPenalties penalties = skips.get();
         Map<String, Double> artistScores = new HashMap<>();
         List<Scored> scored = new ArrayList<>();
         for (Track track : library) {
@@ -88,6 +99,7 @@ public final class CandidateScorer {
             if (recentArtists.contains(group)) {
                 score *= weights.recentArtistFactor();
             }
+            score *= penalties.factor(track, weights);
             scored.add(new Scored(track, group, score));
         }
         return spreadArtists(scored, limit);

@@ -41,6 +41,21 @@ public class LmsPlayerActivity implements PlayerActivityPort {
         }
     }
 
+    @Override
+    public List<Track> queueSlice(String playerId, int from, int to) {
+        if (to <= from) {
+            return List.of();
+        }
+        try {
+            return LmsPlaybackContext.queue(lms.request(playerId, List.of("status", from, to - from, "tags:aluy")));
+        } catch (IOException e) {
+            throw new UncheckedIOException("Could not read the queue of " + playerId, e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted", e);
+        }
+    }
+
     static Optional<NowPlaying> parse(String playerId, JsonNode status) {
         List<Track> current = LmsPlaybackContext.queue(status);
         if (current.isEmpty()) {
@@ -49,6 +64,7 @@ public class LmsPlayerActivity implements PlayerActivityPort {
         return Optional.of(new NowPlaying(playerId,
                 "play".equals(status.path("mode").asText()),
                 current.getFirst(),
+                status.path("playlist_cur_index").asInt(0),
                 status.path("time").asDouble(0),
                 status.path("duration").asDouble(0)));
     }

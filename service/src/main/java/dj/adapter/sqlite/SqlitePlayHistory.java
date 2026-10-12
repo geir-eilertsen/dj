@@ -1,8 +1,10 @@
 package dj.adapter.sqlite;
 
 import dj.domain.model.Play;
+import dj.domain.model.Skip;
 import dj.domain.model.Track;
 import dj.domain.model.TrackId;
+import dj.domain.port.FeedbackStore;
 import dj.domain.port.PlayHistory;
 
 import java.nio.file.Files;
@@ -18,10 +20,13 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
-/** The listening log in a local SQLite database. Queried rarely (Start DJ), so not cached. */
-public class SqlitePlayHistory implements PlayHistory {
+/**
+ * The listening log, suggestions and skips in a local SQLite database. Plays are queried
+ * rarely (Start DJ), so not cached; skips are read once per mix and stay a small table.
+ */
+public class SqlitePlayHistory implements PlayHistory, FeedbackStore {
 
-    private static final int SCHEMA_VERSION = 1;
+    private static final int SCHEMA_VERSION = 2;
     private static final String COLUMNS = "player, started_at, track_id, url, title, artist, album, year";
 
     private final String url;
@@ -73,6 +78,75 @@ public class SqlitePlayHistory implements PlayHistory {
                 playerId, 0L).stream().findFirst();
     }
 
+    @Override
+    public synchronized void recordSuggested(String playerId, List<Track> tracks, Instant at) {
+        try (Connection db = DriverManager.getConnection(url);
+             PreparedStatement insert = db.prepareStatement("INSERT INTO suggestion (player, url, suggested_at) VALUES (?, ?, ?)")) {
+            for (Track track : tracks) {
+                insert.setString(1, playerId);
+                insert.setString(2, track.url());
+                insert.setLong(3, at.toEpochMilli());
+                insert.addBatch();
+            }
+            insert.executeBatch();
+        } catch (SQLException e) {
+            throw new IllegalStateException("Could not record suggestions", e);
+        }
+    }
+
+    @Override
+    public boolean wasSuggested(String playerId, String trackUrl, Instant since) {
+        try (Connection db = DriverManager.getConnection(url);
+             PreparedStatement select = db.prepareStatement(
+                     "SELECT 1 FROM suggestion WHERE player = ? AND url = ? AND suggested_at >= ? LIMIT 1")) {
+            select.setString(1, playerId);
+            select.setString(2, trackUrl);
+            select.setLong(3, since.toEpochMilli());
+            try (ResultSet rs = select.executeQuery()) {
+                return rs.next();
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Could not read suggestions", e);
+        }
+    }
+
+    @Override
+    public synchronized void recordSkip(Skip skip) {
+        Track t = skip.track();
+        try (Connection db = DriverManager.getConnection(url);
+             PreparedStatement insert = db.prepareStatement(
+                     "INSERT INTO skip (player, skipped_at, url, title, artist) VALUES (?, ?, ?, ?, ?)")) {
+            insert.setString(1, skip.playerId());
+            insert.setLong(2, skip.at().toEpochMilli());
+            insert.setString(3, t.url());
+            insert.setString(4, t.title());
+            insert.setString(5, t.artist());
+            insert.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException("Could not record skip of " + t.title(), e);
+        }
+    }
+
+    @Override
+    public List<Skip> skipsSince(Instant since) {
+        try (Connection db = DriverManager.getConnection(url);
+             PreparedStatement select = db.prepareStatement(
+                     "SELECT player, skipped_at, url, title, artist FROM skip WHERE skipped_at >= ? ORDER BY skipped_at")) {
+            select.setLong(1, since.toEpochMilli());
+            List<Skip> skips = new ArrayList<>();
+            try (ResultSet rs = select.executeQuery()) {
+                while (rs.next()) {
+                    String trackUrl = rs.getString(3);
+                    skips.add(new Skip(rs.getString(1), Instant.ofEpochMilli(rs.getLong(2)),
+                            new Track(TrackId.of(trackUrl), trackUrl, rs.getString(4), rs.getString(5), "", 0, 0)));
+                }
+            }
+            return skips;
+        } catch (SQLException e) {
+            throw new IllegalStateException("Could not read skips", e);
+        }
+    }
+
     private List<Play> query(String sql, String playerId, long since) {
         try (Connection db = DriverManager.getConnection(url);
              PreparedStatement select = db.prepareStatement(sql)) {
@@ -98,21 +172,37 @@ public class SqlitePlayHistory implements PlayHistory {
             try (ResultSet rs = st.executeQuery("PRAGMA user_version")) {
                 version = rs.next() ? rs.getInt(1) : 0;
             }
-            if (version >= SCHEMA_VERSION) {
-                return;
+            if (version < 1) {
+                st.executeUpdate("""
+                        CREATE TABLE IF NOT EXISTS play (
+                            player     TEXT NOT NULL,
+                            started_at INTEGER NOT NULL,
+                            track_id   TEXT NOT NULL,
+                            url        TEXT NOT NULL,
+                            title      TEXT NOT NULL,
+                            artist     TEXT NOT NULL,
+                            album      TEXT NOT NULL,
+                            year       INTEGER NOT NULL
+                        )""");
+                st.executeUpdate("CREATE INDEX IF NOT EXISTS play_by_player_time ON play (player, started_at)");
             }
-            st.executeUpdate("""
-                    CREATE TABLE IF NOT EXISTS play (
-                        player     TEXT NOT NULL,
-                        started_at INTEGER NOT NULL,
-                        track_id   TEXT NOT NULL,
-                        url        TEXT NOT NULL,
-                        title      TEXT NOT NULL,
-                        artist     TEXT NOT NULL,
-                        album      TEXT NOT NULL,
-                        year       INTEGER NOT NULL
-                    )""");
-            st.executeUpdate("CREATE INDEX IF NOT EXISTS play_by_player_time ON play (player, started_at)");
+            if (version < 2) {
+                st.executeUpdate("""
+                        CREATE TABLE IF NOT EXISTS suggestion (
+                            player       TEXT NOT NULL,
+                            url          TEXT NOT NULL,
+                            suggested_at INTEGER NOT NULL
+                        )""");
+                st.executeUpdate("CREATE INDEX IF NOT EXISTS suggestion_by_player_url ON suggestion (player, url)");
+                st.executeUpdate("""
+                        CREATE TABLE IF NOT EXISTS skip (
+                            player     TEXT NOT NULL,
+                            skipped_at INTEGER NOT NULL,
+                            url        TEXT NOT NULL,
+                            title      TEXT NOT NULL,
+                            artist     TEXT NOT NULL
+                        )""");
+            }
             st.executeUpdate("PRAGMA user_version = " + SCHEMA_VERSION);
         }
     }
