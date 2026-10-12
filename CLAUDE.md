@@ -20,7 +20,9 @@ natural-language requests and explanations.
   bliss-analyser can't analyse them, genre metadata is useless, and the audio itself always
   needs the internet. "Playback must never depend on the internet" therefore means: the
   *suggestion path* must never depend on a cloud service.
-- Host has JDK 21 + Maven 3.8 (apt). User `geir` is not in the `docker` group by default.
+- Host has JDK 21 + Maven 3.8 (apt) and `gh`. User `geir` is in the `docker` group (run
+  docker as `sg docker -c ...` in shells that predate the group change). No passwordless sudo.
+- Repo: https://github.com/geir-eilertsen/dj (public; never commit secrets).
 
 ## Architecture
 
@@ -42,27 +44,46 @@ Hexagonal: `dj.domain` has no framework dependencies (JDK only); adapters live i
 wiring in `dj.App` (manual constructor injection; no DI container).
 
 Ports (`dj.domain.port`):
-- `LibraryPort`: tracks from LMS via JSON-RPC `/jsonrpc.js` (never LMS's SQLite files).
-  Adapter `LmsLibrary`. Note: `titles` ignores `sort:random`, so the adapter loads a cached
-  snapshot of the library and samples in Java.
-- `SimilarityPort`: acoustic/other neighbours. Stub (`NoSimilarity`) returns nothing.
+- `LibraryPort.allTracks()`: every track with year and play count, from LMS JSON-RPC
+  `/jsonrpc.js` (never LMS's SQLite files). Adapter `LmsLibrary` caches a snapshot (TTL).
+  `titles` has no random sort; tag `O` = play count. LMS exposes no last-played time.
+- `PlaybackContextPort`: player name + the player's whole queue. Adapter `LmsPlaybackContext`
+  (`status`, own 2 s client because it's on the mix path); falls back to request seeds.
+- `ArtistProfileStore`: offline artist profiles (tags + similar artists). Adapter
+  `SqliteArtistProfileStore` (`$DJ_DATA_DIR/dj.db`, mirrored in memory for fast reads).
+- `ArtistInfoSource`: online artist info, background only. Adapter `LastFmArtistInfo`
+  (`artist.getSimilar` + `artist.getTopTags`, 250 ms spacing, error 6 = unknown artist).
+- `SimilarityPort`: acoustic neighbours. Stub (`NoSimilarity`); Bliss can't analyse streams.
 - `LlmPort`: reranks candidates, returning IDs only. Stub (`NoLlm`) returns nothing.
-- `PlaybackContextPort`: player, seed/recent tracks, time of day. Stub (`BasicPlaybackContext`).
+
+Artist names are matched via `ArtistNames.key()` (case, accents, punctuation, "the", "&").
 
 Core flow (`MixService`):
-1. Build context; candidates = similarity neighbours, topped up with random library tracks;
-   exclude seed tracks.
-2. Ask the LLM to pick and order **by ID only**, under a hard timeout.
-3. `TrackSelection`: **discard any ID not in the candidate list**, drop duplicates, cap at
+1. Context = player queue. Seeds = request seeds, else the last 5 queued tracks.
+2. Candidates = acoustic neighbours (none yet), then `CandidateScorer` over the whole library:
+   similar-artist match (either artist's profile) + tag cosine + play count + year closeness
+   + jitter; queued tracks and the same song on another service excluded; artists in the
+   last 4 queued tracks ×0.3; greedy artist spreading (×0.5 per earlier pick). Weights in
+   `ScoringWeights.DEFAULTS`.
+3. Ask the LLM to pick and order **by ID only**, under a hard timeout.
+4. `TrackSelection`: **discard any ID not in the candidate list**, drop duplicates, cap at
    count, top up from candidate order if short.
-4. LLM slow, failing or empty → candidate (similarity) order. A mix is always produced if
-   the library has tracks.
+5. LLM slow, failing or empty → candidate order. A mix is always produced if the library
+   has tracks; missing profiles just weaken the scoring.
+
+Background: `ArtistEnricher` runs 10 s after start and then every `DJ_ENRICH_INTERVAL_HOURS`
+when `LASTFM_API_KEY` is set. It (re)fetches library artists with no profile or one older than
+`DJ_ARTIST_MAX_AGE_DAYS`, saves "unknown" profiles too, saves under the library's spelling, and
+aborts a run after 5 failures in a row.
 
 HTTP API (`dj.adapter.http`): `GET /mix?player=<mac>&seed=<id,id,..>&count=<n>` →
-`{"tracks":[{"id","url","title","artist","album"}]}`; `GET /health`.
+`{"source","tracks":[{"id","url","title","artist","album"}]}`; `GET /health`; `GET /status`
+(profile count, Last.fm configured, last enrichment result).
 
 Config via env vars: `LMS_URL` (default `http://localhost:9000`), `DJ_PORT` (9010),
-`DJ_CANDIDATES` (50), `DJ_LLM_TIMEOUT_MS` (3000), `DJ_LIBRARY_TTL_MINUTES` (15).
+`DJ_CANDIDATES` (50), `DJ_LLM_TIMEOUT_MS` (3000), `DJ_LIBRARY_TTL_MINUTES` (15),
+`DJ_DATA_DIR` (`data`; `/data` in Docker, named volume `dj-data`), `LASTFM_API_KEY` (from
+`.env`, gitignored, never logged), `DJ_ENRICH_INTERVAL_HOURS` (24), `DJ_ARTIST_MAX_AGE_DAYS` (30).
 
 Runs in Docker next to LMS with `network_mode: host` (plugin → `http://localhost:9010`,
 service → `http://localhost:9000`).
@@ -77,17 +98,28 @@ service → `http://localhost:9000`).
 - Ask before installing system packages or touching the running LMS (restarts, copying the
   plugin, changing player prefs).
 
-## Roadmap (not built yet)
-- **Step 2: real candidates.** Bliss can't analyse streamed tracks, so options include:
-  local audio library + bliss-analyser SQLite; Last.fm/ListenBrainz similar artists/tracks
-  (cached locally, so the suggestion path stays offline-tolerant); artist/album affinity from
-  LMS play counts and ratings (`LibraryPort` additions); avoid recently played artists.
+## Roadmap
+- **Step 1 (done):** plugin + service skeleton, random tracks, DSTM fallback verified.
+- **Step 2 (done):** Last.fm artist similarity + tags cached in SQLite, play-count weighting,
+  queue-aware exclusion, recent-artist penalty, artist spreading. Ideas: tune weights from
+  real listening; track-level `track.getSimilar`; LMS ratings once used.
+- **"Start DJ" home-page button:** an LMS plugin menu (Material Skin: pin to home screen)
+  that asks the service for a fresh mix, replaces the queue, plays it and sets the player's
+  DSTM mixer to DJ. Also the natural home for step 4 requests and "why this track?".
 - **Step 3: LLM reranking.** `OllamaLlm` (local, default) and `ClaudeLlm` (optional, API key
-  via env). Prompt with compact candidate lines (id, artist, title, album, year); response
-  is a JSON list of IDs + a one-line reason each. Store reasons for "why this track?".
+  via env). Prompt with compact candidate lines (id, artist, title, album, year, tags);
+  response is a JSON list of IDs + a one-line reason each. Store reasons for "why this track?".
 - **Step 4: natural-language requests** ("mellow prog for Sunday morning"): an endpoint
   plus an LMS menu/CLI command to set a per-player "mood" that biases candidates and the LLM.
+  Last.fm tags give the vocabulary for matching moods/genres.
 - **Discovery mode:** suggest tracks outside the library via Spotify/TIDAL (playable URLs),
-  clearly separated from library-only mode.
-- Real `PlaybackContextPort` adapter: player name, recent history from LMS `status`.
-- Observability: log each mix decision (source: llm/fallback, latency) for tuning.
+  clearly separated from library-only mode. Last.fm similar artists not in the library are
+  already stored.
+- Local audio + bliss-analyser would make `SimilarityPort` real.
+- Observability: per-candidate score breakdown endpoint for tuning.
+
+## Gotchas
+- `!` commands in Claude Code can't prompt for a sudo password; long commands pasted into a
+  terminal can wrap and break. Prefer short commands or scripts.
+- When LMS's own random mix is active on a player (`randomplay: 1` in `status`), DSTM does
+  not call any mixer. Clear the queue to return to DJ.

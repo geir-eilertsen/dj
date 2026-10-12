@@ -11,8 +11,9 @@ behaviour and the music keeps playing.
 LMS ──DSTM──▶ plugin/ (Perl) ──GET /mix──▶ service/ (Java) ──JSON-RPC──▶ LMS library
 ```
 
-Status: **step 1 (skeleton)**. The service returns random tracks from the library;
-similarity, LLM reranking and playback context are stubbed. See `CLAUDE.md` for the
+Status: **step 2**. The service ranks library tracks by artist similarity and style tags
+from Last.fm (cached locally), your play counts and release years, avoids what's already
+queued and spreads artists out. LLM reranking is still stubbed. See `CLAUDE.md` for the
 architecture and roadmap.
 
 ## Layout
@@ -67,7 +68,11 @@ curl 'localhost:9010/mix?player=b0:3c:dc:72:f2:72&seed=119,131&count=3'
 {"source":"fallback","tracks":[{"id":"61","url":"tidal://295476141.flc","title":"the slab","artist":"Slowdive","album":"everything is alive"}]}
 ```
 
-`source` is `llm` when the LLM chose the order and `fallback` otherwise. Errors return
+`source` is `llm` when the LLM chose the order and `fallback` otherwise. Without `seed`,
+the end of the player's queue is used.
+
+`GET /status` shows the number of artist profiles, whether Last.fm is configured, and the
+last enrichment result. Errors return
 `400` for a bad request, `503` if LMS can't be reached, and `{"error": "..."}` as the body.
 
 ### Configuration (environment variables)
@@ -79,6 +84,25 @@ curl 'localhost:9010/mix?player=b0:3c:dc:72:f2:72&seed=119,131&count=3'
 | `DJ_CANDIDATES` | `50` | Candidate pool size offered to the LLM |
 | `DJ_LLM_TIMEOUT_MS` | `3000` | Give up on the LLM after this long |
 | `DJ_LIBRARY_TTL_MINUTES` | `15` | How long the library snapshot is reused |
+| `DJ_DATA_DIR` | `data` (`/data` in Docker) | Where the SQLite database lives |
+| `LASTFM_API_KEY` | (none) | Enables artist similarity and tags. Put it in `.env` |
+| `DJ_ENRICH_INTERVAL_HOURS` | `24` | How often artist info is refreshed |
+| `DJ_ARTIST_MAX_AGE_DAYS` | `30` | When an artist's info counts as stale |
+
+### Last.fm
+
+Artist similarity and style tags come from Last.fm. They are fetched in the background
+and stored in SQLite, so suggestions keep working when Last.fm or the internet is down.
+
+1. Create an API key at https://www.last.fm/api/account/create.
+2. Put it in `/home/dj/.env`, which is gitignored:
+   ```
+   LASTFM_API_KEY=your_key_here
+   ```
+3. Run `docker compose up -d --build`. The first run takes about a minute for 84 artists.
+   Check progress with `curl localhost:9010/status`.
+
+Without a key the service still works, ranking by play counts and years only.
 
 ## LMS plugin
 
