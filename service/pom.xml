@@ -17,6 +17,7 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <jackson.version>2.18.2</jackson.version>
         <sqlite.version>3.47.1.0</sqlite.version>
+        <anthropic.version>2.34.0</anthropic.version>
         <junit.version>5.11.4</junit.version>
     </properties>
 
@@ -26,6 +27,11 @@
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
             <version>${jackson.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.anthropic</groupId>
+            <artifactId>anthropic-java</artifactId>
+            <version>${anthropic.version}</version>
         </dependency>
         <dependency>
             <groupId>org.xerial</groupId>

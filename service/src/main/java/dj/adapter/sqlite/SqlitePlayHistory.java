@@ -18,6 +18,7 @@ import java.sql.Statement;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -26,7 +27,7 @@ import java.util.Optional;
  */
 public class SqlitePlayHistory implements PlayHistory, FeedbackStore {
 
-    private static final int SCHEMA_VERSION = 2;
+    private static final int SCHEMA_VERSION = 3;
     private static final String COLUMNS = "player, started_at, track_id, url, title, artist, album, year";
 
     private final String url;
@@ -79,18 +80,35 @@ public class SqlitePlayHistory implements PlayHistory, FeedbackStore {
     }
 
     @Override
-    public synchronized void recordSuggested(String playerId, List<Track> tracks, Instant at) {
+    public synchronized void recordSuggested(String playerId, List<Track> tracks, Map<String, String> reasons, Instant at) {
         try (Connection db = DriverManager.getConnection(url);
-             PreparedStatement insert = db.prepareStatement("INSERT INTO suggestion (player, url, suggested_at) VALUES (?, ?, ?)")) {
+             PreparedStatement insert = db.prepareStatement(
+                     "INSERT INTO suggestion (player, url, suggested_at, reason) VALUES (?, ?, ?, ?)")) {
             for (Track track : tracks) {
                 insert.setString(1, playerId);
                 insert.setString(2, track.url());
                 insert.setLong(3, at.toEpochMilli());
+                insert.setString(4, reasons.get(track.url()));
                 insert.addBatch();
             }
             insert.executeBatch();
         } catch (SQLException e) {
             throw new IllegalStateException("Could not record suggestions", e);
+        }
+    }
+
+    @Override
+    public Optional<String> reasonFor(String playerId, String trackUrl) {
+        try (Connection db = DriverManager.getConnection(url);
+             PreparedStatement select = db.prepareStatement(
+                     "SELECT reason FROM suggestion WHERE player = ? AND url = ? ORDER BY suggested_at DESC LIMIT 1")) {
+            select.setString(1, playerId);
+            select.setString(2, trackUrl);
+            try (ResultSet rs = select.executeQuery()) {
+                return rs.next() ? Optional.ofNullable(rs.getString(1)) : Optional.empty();
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Could not read suggestions", e);
         }
     }
 
@@ -202,6 +220,9 @@ public class SqlitePlayHistory implements PlayHistory, FeedbackStore {
                             title      TEXT NOT NULL,
                             artist     TEXT NOT NULL
                         )""");
+            }
+            if (version < 3) {
+                st.executeUpdate("ALTER TABLE suggestion ADD COLUMN reason TEXT");
             }
             st.executeUpdate("PRAGMA user_version = " + SCHEMA_VERSION);
         }

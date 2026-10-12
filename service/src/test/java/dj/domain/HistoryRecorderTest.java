@@ -103,7 +103,7 @@ class HistoryRecorderTest {
 
     @Test
     void noticesASkippedSuggestion() {
-        feedback.recordSuggested("p1", List.of(song), T0);
+        feedback.recordSuggested("p1", List.of(song), java.util.Map.of(), T0);
         playing("p1", song, 3, 20, 240);
         recorder.poll();
         clock.advance(10);
@@ -116,7 +116,7 @@ class HistoryRecorderTest {
 
     @Test
     void aSuggestionPlayedToTheEndIsNotASkip() {
-        feedback.recordSuggested("p1", List.of(song), T0);
+        feedback.recordSuggested("p1", List.of(song), java.util.Map.of(), T0);
         playing("p1", song, 3, 225, 240);
         recorder.poll();
         clock.advance(10);
@@ -142,7 +142,7 @@ class HistoryRecorderTest {
     @Test
     void tracksJumpedOverBetweenLooksAreSkipped() {
         Track jumpedOver = track("9", "TV-2");
-        feedback.recordSuggested("p1", List.of(jumpedOver), T0);
+        feedback.recordSuggested("p1", List.of(jumpedOver), java.util.Map.of(), T0);
         queue = List.of(track("a"), track("b"), track("c"), song, jumpedOver, next);
         playing("p1", song, 3, 225, 240);
         recorder.poll();
@@ -156,7 +156,7 @@ class HistoryRecorderTest {
 
     @Test
     void goingBackOrStartingANewQueueIsNotASkip() {
-        feedback.recordSuggested("p1", List.of(song, next), T0);
+        feedback.recordSuggested("p1", List.of(song, next), java.util.Map.of(), T0);
         playing("p1", song, 3, 20, 240);
         recorder.poll();
         clock.advance(10);

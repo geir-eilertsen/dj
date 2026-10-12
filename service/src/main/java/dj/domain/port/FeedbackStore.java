@@ -5,11 +5,17 @@ import dj.domain.model.Track;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 
 /** What DJ suggested to each player, and which suggestions the listener skipped. */
 public interface FeedbackStore {
 
-    void recordSuggested(String playerId, List<Track> tracks, Instant at);
+    /** @param reasons why each track was suggested, by URL; tracks without a reason are absent */
+    void recordSuggested(String playerId, List<Track> tracks, Map<String, String> reasons, Instant at);
+
+    /** The reason the most recent suggestion of this URL to this player was made, if any. */
+    Optional<String> reasonFor(String playerId, String url);
 
     /** Whether this URL was suggested to this player since {@code since}. */
     boolean wasSuggested(String playerId, String url, Instant since);

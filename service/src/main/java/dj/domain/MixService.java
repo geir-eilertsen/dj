@@ -2,6 +2,7 @@ package dj.domain;
 
 import dj.domain.model.Mix;
 import dj.domain.model.MixRequest;
+import dj.domain.model.Pick;
 import dj.domain.model.PlaybackContext;
 import dj.domain.model.Track;
 import dj.domain.model.TrackId;
@@ -95,18 +96,28 @@ public final class MixService {
     public Mix mix(MixRequest request) {
         PlaybackContext context = playbackContext.contextFor(request.playerId());
         List<Track> candidates = candidates(request, context);
-        List<TrackId> chosen = askLlm(context, candidates, request.count());
+        List<Pick> picks = askLlm(context, candidates, request.count());
+        List<TrackId> chosen = picks.stream().map(Pick::id).toList();
 
         List<Track> tracks = TrackSelection.select(candidates, chosen, request.count());
         Mix.Source source = TrackSelection.anyValid(candidates, chosen) ? Mix.Source.LLM : Mix.Source.FALLBACK;
-        rememberSuggested(request.playerId(), tracks);
-        return new Mix(tracks, source);
+        Map<TrackId, String> reasons = new HashMap<>();
+        for (Pick pick : picks) {
+            if (!pick.reason().isEmpty() && tracks.stream().anyMatch(t -> t.id().equals(pick.id()))) {
+                reasons.putIfAbsent(pick.id(), pick.reason());
+            }
+        }
+        Mix mix = new Mix(tracks, source, reasons);
+        rememberSuggested(request.playerId(), mix);
+        return mix;
     }
 
     /** So skips of these tracks can be noticed; failing to remember must not fail the mix. */
-    private void rememberSuggested(String playerId, List<Track> tracks) {
+    private void rememberSuggested(String playerId, Mix mix) {
+        Map<String, String> reasons = new HashMap<>();
+        mix.tracks().forEach(t -> mix.reasonFor(t.id()).ifPresent(r -> reasons.put(t.url(), r)));
         try {
-            feedback.recordSuggested(playerId, tracks, clock.instant());
+            feedback.recordSuggested(playerId, mix.tracks(), reasons, clock.instant());
         } catch (RuntimeException e) {
             LOG.log(Level.WARNING, "Could not remember suggestions for " + playerId, e);
         }
@@ -226,14 +237,14 @@ public final class MixService {
         }
     }
 
-    private List<TrackId> askLlm(PlaybackContext context, List<Track> candidates, int count) {
+    private List<Pick> askLlm(PlaybackContext context, List<Track> candidates, int count) {
         if (candidates.isEmpty()) {
             return List.of();
         }
-        CompletableFuture<List<TrackId>> answer =
+        CompletableFuture<List<Pick>> answer =
                 CompletableFuture.supplyAsync(() -> llm.choose(context, candidates, count), executor);
         try {
-            List<TrackId> chosen = answer.get(settings.llmTimeout().toMillis(), TimeUnit.MILLISECONDS);
+            List<Pick> chosen = answer.get(settings.llmTimeout().toMillis(), TimeUnit.MILLISECONDS);
             return chosen == null ? List.of() : chosen;
         } catch (TimeoutException e) {
             answer.cancel(true);

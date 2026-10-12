@@ -6,7 +6,10 @@ import dj.domain.port.FeedbackStore;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 
 /** Test fake for {@link FeedbackStore}. */
 final class InMemoryFeedbackStore implements FeedbackStore {
@@ -16,10 +19,17 @@ final class InMemoryFeedbackStore implements FeedbackStore {
 
     final List<Suggestion> suggestions = new ArrayList<>();
     final List<Skip> skips = new ArrayList<>();
+    final Map<String, String> reasons = new HashMap<>();
 
     @Override
-    public void recordSuggested(String playerId, List<Track> tracks, Instant at) {
+    public void recordSuggested(String playerId, List<Track> tracks, Map<String, String> reasonsByUrl, Instant at) {
         tracks.forEach(t -> suggestions.add(new Suggestion(playerId, t.url(), at)));
+        reasons.putAll(reasonsByUrl);
+    }
+
+    @Override
+    public Optional<String> reasonFor(String playerId, String url) {
+        return Optional.ofNullable(reasons.get(url));
     }
 
     @Override

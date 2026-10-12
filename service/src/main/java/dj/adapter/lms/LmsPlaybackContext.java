@@ -10,7 +10,7 @@ import java.io.IOException;
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
 import java.time.Clock;
-import java.time.LocalTime;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -35,7 +35,7 @@ public class LmsPlaybackContext implements PlaybackContextPort {
 
     @Override
     public PlaybackContext contextFor(String playerId) {
-        LocalTime now = LocalTime.now(clock);
+        LocalDateTime now = LocalDateTime.now(clock);
         try {
             JsonNode status = lms.request(playerId, List.of("status", 0, MAX_QUEUE, "tags:aluy"));
             return new PlaybackContext(playerId, status.path("player_name").asText(playerId),

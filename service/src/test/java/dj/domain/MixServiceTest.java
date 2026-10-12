@@ -86,7 +86,7 @@ class MixServiceTest {
 
     @Test
     void usesTheLlmOrderWhenItChoosesCandidates() {
-        llm = (context, candidates, count) -> ids("7", "3");
+        llm = (context, candidates, count) -> picks("7", "3");
 
         Mix mix = mix(List.of(), 2);
 
@@ -96,7 +96,7 @@ class MixServiceTest {
 
     @Test
     void discardsLlmIdsThatAreNotCandidates() {
-        llm = (context, candidates, count) -> ids("1", "not-a-track", "42");
+        llm = (context, candidates, count) -> picks("1", "not-a-track", "42");
 
         Mix mix = mix(ids("1"), 3);
 
@@ -125,7 +125,7 @@ class MixServiceTest {
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
-            return ids("8");
+            return picks("8");
         };
 
         Mix mix = assertTimeoutPreemptively(Duration.ofSeconds(2), () -> mix(List.of(), 2));
@@ -389,6 +389,24 @@ class MixServiceTest {
         assertEquals(ids("3"), ids(mix.tracks()));
     }
 
+    @Test
+    void keepsTheLlmsReasonsForTheTracksItPicked() {
+        llm = (context, candidates, count) -> List.of(
+                new dj.domain.model.Pick(TrackId.of("7"), "Seventh heaven"),
+                new dj.domain.model.Pick(TrackId.of("invented"), "Not a candidate"),
+                new dj.domain.model.Pick(TrackId.of("3"), ""));
+
+        Mix mix = mix(List.of(), 3);
+
+        assertEquals(ids("7", "3", "1"), ids(mix.tracks()));
+        assertEquals(java.util.Map.of(TrackId.of("7"), "Seventh heaven"), mix.reasons());
+        assertEquals(java.util.Map.of(mix.tracks().getFirst().url(), "Seventh heaven"), feedback.reasons);
+    }
+
+    private static List<dj.domain.model.Pick> picks(String... ids) {
+        return java.util.Arrays.stream(ids).map(id -> new dj.domain.model.Pick(TrackId.of(id), "because")).toList();
+    }
+
     /** Gasolin' (Kim Larsen's band) plus two much more played metal bands. */
     private void useDanishLibrary() {
         libraryTracks = List.of(Tracks.track("1", "Gasolin'", 1975, 1),
@@ -410,7 +428,7 @@ class MixServiceTest {
 
     private Mix mix(List<TrackId> seeds, int count) {
         PlaybackContextPort contexts = playerId -> {
-            PlaybackContext context = new PlaybackContext(playerId, "Test player", playing, queue, LocalTime.NOON);
+            PlaybackContext context = new PlaybackContext(playerId, "Test player", playing, queue, java.time.LocalDateTime.of(2026, 10, 11, 12, 0));
             seenContext.set(context);
             return context;
         };

@@ -1,5 +1,6 @@
 package dj;
 
+import dj.adapter.claude.ClaudeLlm;
 import dj.adapter.http.MixHttpServer;
 import dj.adapter.lastfm.LastFmArtistInfo;
 import dj.adapter.lms.LmsJsonRpcClient;
@@ -21,6 +22,7 @@ import dj.domain.MixSettings;
 import dj.domain.ScoringWeights;
 import dj.domain.SkipPenalties;
 import dj.domain.TimeOfDaySeeds;
+import dj.domain.port.LlmPort;
 
 import java.io.IOException;
 import java.lang.System.Logger;
@@ -80,7 +82,10 @@ public final class App {
                     Instant now = Instant.now();
                     return SkipPenalties.from(history.skipsSince(now.minus(SkipPenalties.MEMORY)), now);
                 }),
-                new NoLlm(),
+                config.anthropicApiKey()
+                        .<LlmPort>map(key -> new ClaudeLlm(key, config.llmModel(), config.llmLanguage(),
+                                config.llmTimeout().plusMillis(500), profiles))
+                        .orElseGet(NoLlm::new),
                 playbackContext,
                 enricher,
                 discoverer,
@@ -93,10 +98,11 @@ public final class App {
 
         AtomicReference<ArtistEnricher.Result> lastEnrichment = new AtomicReference<>();
         AtomicReference<Discoverer.Result> lastDiscovery = new AtomicReference<>();
-        MixHttpServer server = new MixHttpServer(mixService, config.port(), () -> {
+        MixHttpServer server = new MixHttpServer(mixService, history, config.port(), () -> {
             Map<String, Object> status = new LinkedHashMap<>();
             status.put("artistProfiles", profiles.size());
             status.put("lastFm", config.lastFmApiKey().isPresent());
+            status.put("llm", config.anthropicApiKey().isPresent() ? config.llmModel() : null);
             status.put("lastEnrichment", lastEnrichment.get());
             status.put("discoveredTracks", discovered.allTracks().size());
             status.put("listenedArtists", discovered.listenedArtists().size());
