@@ -116,10 +116,12 @@ sub trackInfoReason {
 	my $reason = $url && $reasons->get($url);
 	return unless $reason;
 
+	# One labelled line ("Why DJ chose this: ..."), like Year; a folder needs an extra click
 	return {
-		name   => cstring($client, 'PLUGIN_DJ_WHY_CHOSEN'),
-		items  => [{ type => 'text', wrap => 1, name => $reason }],
-		unfold => 1,
+		type  => 'text',
+		label => 'PLUGIN_DJ_WHY_CHOSEN',
+		name  => $reason,
+		wrap  => 1,
 	};
 }
 
