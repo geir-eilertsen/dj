@@ -3,8 +3,9 @@
 <extension>
 	<id>3cabe726-d977-4265-bcf9-be3e749cb41b</id>
 	<name>PLUGIN_DJ</name>
+	<icon>plugins/DJ/html/images/icon.png</icon>
 	<module>Plugins::DJ::Plugin</module>
-	<version>0.2.0</version>
+	<version>0.3.0</version>
 	<description>PLUGIN_DJ_DESC</description>
 	<creator>Geir Eilertsen</creator>
 	<optionsURL>plugins/DJ/settings/basic.html</optionsURL>
