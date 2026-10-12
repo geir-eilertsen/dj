@@ -113,7 +113,7 @@ public final class MixService {
             return chosen == null ? List.of() : chosen;
         } catch (TimeoutException e) {
             answer.cancel(true);
-            LOG.log(Level.WARNING, "LLM did not answer within {0} ms; using candidate order", llmTimeout.toMillis());
+            LOG.log(Level.WARNING, "LLM did not answer within {0,number,#} ms; using candidate order", llmTimeout.toMillis());
         } catch (ExecutionException e) {
             LOG.log(Level.WARNING, "LLM failed; using candidate order", e.getCause());
         } catch (InterruptedException e) {
