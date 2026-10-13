@@ -133,8 +133,9 @@ service → `http://localhost:9000`).
   needs investigation); a "why this track?" endpoint showing score parts.
 - **Step 3 (done):** Claude Haiku picks/orders with reasons; "Why this track?" in the DJ menu.
   Local Ollama was dropped: the server has 3 GB RAM and no GPU. An `OllamaLlm` for a LAN
-  machine could still implement `LlmPort`. Ideas: put the reason in LMS's track info / now
-  playing; let skips and reasons feed back into the prompt.
+  machine could still implement `LlmPort`. Reasons also show in track info and as a
+  Material Skin pop-up on `newsong` (plugin caches them 30 days). Idea: let skips and
+  reasons feed back into the prompt.
 - **Step 4: natural-language requests** ("mellow prog for Sunday morning"): an endpoint
   plus an LMS menu item to set a per-player "mood" that biases candidates and the LLM.
   Last.fm tags give the vocabulary.

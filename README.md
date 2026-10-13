@@ -173,6 +173,9 @@ switches off LMS's random mix, replaces the queue, starts playing and makes
 DJ the player's Don't Stop The Music mixer, so the music keeps going.
 
 **Why this track?** in the same menu shows the reason DJ gave for the song that's playing.
+The reason is also shown without any clicks: when a song DJ chose starts, Material Skin pops
+it up for 20 seconds on every window showing that player (`material-skin send-notif`), and
+it is the first line of the song's track info ("Why DJ chose this").
 
 To get a home screen button in Material Skin, long-press **Start DJ** (or use its ⋮ menu)
 and choose *Pin to home screen*.
