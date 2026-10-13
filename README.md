@@ -29,6 +29,8 @@ What it does today:
 - **Play a mood…** takes a request in your own words ("mellow prog for Sunday morning") and
   steers the music by it for the next 4 hours.
 - Christmas songs stay out of the mix until Advent, unless you ask for them.
+- Upcoming concerts in Europe (from Ticketmaster) by the artist that's playing, in track info
+  and as a pop-up, plus a list of every concert by the artists you play.
 
 See `CLAUDE.md` for the architecture and roadmap.
 
@@ -58,7 +60,7 @@ services:
       - TZ=Europe/Oslo        # your time zone: DJ picks music by time of day
       - LMS_URL=http://localhost:9000
     env_file:
-      - path: .env            # LASTFM_API_KEY=... and ANTHROPIC_API_KEY=..., one per line
+      - path: .env            # LASTFM_API_KEY=..., ANTHROPIC_API_KEY=..., TICKETMASTER_API_KEY=..., one per line
         required: false
     volumes:
       - dj-data:/data
@@ -161,6 +163,12 @@ Moods (requests in the listener's own words):
 
 `GET /why?player=<id>&url=<track url>` returns `{"reason"}` for a track DJ suggested, else 404.
 
+`GET /concerts?artist=<name>` returns `{"artist","concerts":[{"date","time"?,"title","venue","city","country","url"?}]}`:
+the artist's upcoming concerts in Europe, soonest first, in the venue's local date and time.
+It is looked up if the last lookup is over a day old (`504` if that takes over 4 s; the lookup
+finishes in the background). `GET /concerts` returns `{"artists":[{"artist","concerts"}]}` for
+every artist with concerts, by the date of their next one. `404` without a Ticketmaster key.
+
 `GET /status` shows the number of artist profiles and discovered tracks, whether Last.fm is
 configured, and the last enrichment and discovery results. Errors return
 `400` for a bad request, `503` if LMS can't be reached, and `{"error": "..."}` as the body.
@@ -183,6 +191,9 @@ configured, and the last enrichment and discovery results. Errors return
 | `ANTHROPIC_API_KEY` | (none) | Enables Claude: picks, reasons, mood understanding. Put it in `.env` |
 | `DJ_LLM_MODEL` | `claude-haiku-5-5` | Claude model |
 | `DJ_LLM_LANGUAGE` | `English` | Language of the reasons |
+| `TICKETMASTER_API_KEY` | (none) | Enables concert lookups. Put it in `.env` |
+| `DJ_CONCERT_LOOKUP_MS` | `4000` | Max wait for looking up the playing artist's concerts |
+| `DJ_CONCERT_MAX_AGE_HOURS` | `24` | How long a concert lookup is reused; also how often all artists are checked |
 
 ### Last.fm
 
@@ -211,6 +222,22 @@ docker compose up -d
 
 Each mix costs roughly $0.0005 with Claude Haiku. `DJ_LLM_MODEL`, `DJ_LLM_LANGUAGE` (reason
 language, default English) and `DJ_LLM_TIMEOUT_MS` (default 5000) tune it.
+
+### Ticketmaster
+
+Concerts come from the [Ticketmaster Discovery API](https://developer.ticketmaster.com)
+(free: 5000 requests a day). Create an app there, then:
+
+```
+read -rsp 'Ticketmaster consumer key: ' k && printf 'TICKETMASTER_API_KEY=%s\n' "$k" >> /home/dj/.env
+docker compose up -d
+```
+
+Two minutes after start, and then daily, DJ checks every library artist (most played first) and
+every artist you've played from TIDAL/Spotify: about two requests per artist on tour, one for
+the others. Only concerts in Europe are kept. Artists are matched by exact name, so a band
+Ticketmaster lists under another name is missed, and two bands sharing a name can be mixed up.
+Shows sold only through other ticket sellers aren't included.
 
 ## LMS plugin
 
@@ -288,6 +315,13 @@ they're ready in December.
 
 Pinning a recent mood to the home screen pins its *position* in the list (LMS menus work by
 position), so it changes when you set new moods; pin **Play a mood…** instead.
+
+### Concerts
+
+With a Ticketmaster key, track info for a song shows **Concerts in Europe (N)** when its artist
+has concerts coming up. When a song starts, Material Skin pops up the next three ("On tour:
+14.11.2026 Oslo, …"), at most every 12 hours per artist and player. **Apps → DJ → Upcoming
+concerts** lists every artist you play that is touring, soonest first.
 
 ### Verify that the music keeps playing
 

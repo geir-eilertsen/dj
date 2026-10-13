@@ -45,7 +45,7 @@ services:
       - TZ=Europe/Oslo        # your time zone: DJ picks music by time of day
       - LMS_URL=http://localhost:9000
     env_file:
-      - path: .env            # LASTFM_API_KEY=... and ANTHROPIC_API_KEY=..., one per line
+      - path: .env            # LASTFM_API_KEY=..., ANTHROPIC_API_KEY=..., TICKETMASTER_API_KEY=..., one per line
         required: false
     volumes:
       - dj-data:/data
@@ -66,12 +66,13 @@ add `https://raw.githubusercontent.com/geir-eilertsen/dj/main/repo.xml`, then ti
 
 **3. Play.** In Material Skin: **Apps → DJ → Start DJ** or **Play a mood…**.
 
-## Keys (optional, both recommended)
+## Keys (optional, all recommended)
 
 | Variable | Get it from | Without it |
 |---|---|---|
 | `LASTFM_API_KEY` | [last.fm/api/account/create](https://www.last.fm/api/account/create) (free) | DJ only knows play counts and release years |
 | `ANTHROPIC_API_KEY` | [console.anthropic.com](https://console.anthropic.com), created **inside a workspace** | No reasons, no Claude ordering; moods by keywords only |
+| `TICKETMASTER_API_KEY` | [developer.ticketmaster.com](https://developer.ticketmaster.com) (free) | No concert dates |
 
 Claude Haiku costs roughly $0.0005 per mix. Keep keys in `.env`, not in the compose file. DJ
 never logs them.
