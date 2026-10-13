@@ -172,7 +172,7 @@ configured, and the last enrichment and discovery results. Errors return
 | `LMS_URL` | `http://localhost:9000` | LMS base URL |
 | `DJ_PORT` | `9010` | HTTP port |
 | `DJ_CANDIDATES` | `50` | Candidate pool size offered to the LLM |
-| `DJ_LLM_TIMEOUT_MS` | `3000` | Give up on the LLM after this long |
+| `DJ_LLM_TIMEOUT_MS` | `5000` | Give up on the LLM after this long |
 | `DJ_LIBRARY_TTL_MINUTES` | `15` | How long the library snapshot is reused |
 | `DJ_DATA_DIR` | `data` (`/data` in Docker) | Where the SQLite database lives |
 | `LASTFM_API_KEY` | (none) | Enables artist similarity and tags. Put it in `.env` |
@@ -180,6 +180,9 @@ configured, and the last enrichment and discovery results. Errors return
 | `DJ_ARTIST_MAX_AGE_DAYS` | `30` | When artist info and discovered music count as stale |
 | `DJ_SEED_LOOKUP_MS` | `1500` | Max wait for looking up an unknown artist during a mix |
 | `DJ_DISCOVERY_SHARE` | `0.4` | Share of each mix from TIDAL discovery (0 turns it off) |
+| `ANTHROPIC_API_KEY` | (none) | Enables Claude: picks, reasons, mood understanding. Put it in `.env` |
+| `DJ_LLM_MODEL` | `claude-haiku-5-5` | Claude model |
+| `DJ_LLM_LANGUAGE` | `English` | Language of the reasons |
 
 ### Last.fm
 
