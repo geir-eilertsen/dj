@@ -10,7 +10,8 @@ import java.util.Optional;
 record Config(URI lmsUrl, int port, int candidatePoolSize, Duration llmTimeout, Duration libraryTtl,
               Path dataDir, Optional<String> lastFmApiKey, Duration enrichmentInterval, Duration artistMaxAge,
               Duration seedLookupTimeout, double discoveryShare,
-              Optional<String> anthropicApiKey, String llmModel, String llmLanguage) {
+              Optional<String> anthropicApiKey, String llmModel, String llmLanguage,
+              Optional<String> ticketmasterApiKey, Duration concertLookupTimeout, Duration concertMaxAge) {
 
     static Config fromEnv(Map<String, String> env) {
         return new Config(
@@ -27,7 +28,10 @@ record Config(URI lmsUrl, int port, int candidatePoolSize, Duration llmTimeout, 
                 Double.parseDouble(env.getOrDefault("DJ_DISCOVERY_SHARE", "0.4")),
                 Optional.ofNullable(env.get("ANTHROPIC_API_KEY")).map(String::strip).filter(k -> !k.isEmpty()),
                 env.getOrDefault("DJ_LLM_MODEL", "claude-haiku-5-5"),
-                env.getOrDefault("DJ_LLM_LANGUAGE", "English"));
+                env.getOrDefault("DJ_LLM_LANGUAGE", "English"),
+                Optional.ofNullable(env.get("TICKETMASTER_API_KEY")).map(String::strip).filter(k -> !k.isEmpty()),
+                Duration.ofMillis(Long.parseLong(env.getOrDefault("DJ_CONCERT_LOOKUP_MS", "4000"))),
+                Duration.ofHours(Long.parseLong(env.getOrDefault("DJ_CONCERT_MAX_AGE_HOURS", "24"))));
     }
 
     /** Never log the API keys. */
@@ -38,6 +42,8 @@ record Config(URI lmsUrl, int port, int candidatePoolSize, Duration llmTimeout, 
                 + ", lastFm=" + (lastFmApiKey.isPresent() ? "configured" : "not configured")
                 + ", enrichmentInterval=" + enrichmentInterval + ", artistMaxAge=" + artistMaxAge
                 + ", seedLookupTimeout=" + seedLookupTimeout + ", discoveryShare=" + discoveryShare
-                + ", llm=" + (anthropicApiKey.isPresent() ? llmModel + " (" + llmLanguage + ")" : "not configured") + "]";
+                + ", llm=" + (anthropicApiKey.isPresent() ? llmModel + " (" + llmLanguage + ")" : "not configured")
+                + ", concerts=" + (ticketmasterApiKey.isPresent() ? "Ticketmaster" : "not configured")
+                + ", concertLookupTimeout=" + concertLookupTimeout + ", concertMaxAge=" + concertMaxAge + "]";
     }
 }

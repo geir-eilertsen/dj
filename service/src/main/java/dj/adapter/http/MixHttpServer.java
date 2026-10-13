@@ -4,8 +4,11 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
+import dj.domain.ConcertFinder;
 import dj.domain.MixService;
 import dj.domain.MoodService;
+import dj.domain.model.ArtistConcerts;
+import dj.domain.model.Concert;
 import dj.domain.model.Mix;
 import dj.domain.model.MixRequest;
 import dj.domain.model.Mood;
@@ -21,13 +24,19 @@ import java.lang.System.Logger.Level;
 import java.net.InetSocketAddress;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.function.Supplier;
 
 /**
@@ -39,6 +48,8 @@ import java.util.function.Supplier;
  *   <li>{@code POST /mood} with {@code player} and {@code text} (query or form body): sets the mood</li>
  *   <li>{@code POST /mood/clear?player=<id>}</li>
  *   <li>{@code GET /why?player=<id>&url=<track url>}: why DJ suggested that track to that player</li>
+ *   <li>{@code GET /concerts?artist=<name>}: that artist's upcoming concerts in Europe (looked up if need be)</li>
+ *   <li>{@code GET /concerts}: every known artist with upcoming concerts in Europe</li>
  *   <li>{@code GET /health}</li>
  *   <li>{@code GET /status}: diagnostics from the {@code status} supplier</li>
  * </ul>
@@ -54,6 +65,9 @@ public class MixHttpServer {
     private final MixService mixService;
     private final FeedbackStore feedback;
     private final MoodService moods;
+    private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
+    private volatile ConcertFinder concerts;
+    private volatile Duration concertLookupTimeout;
 
     public MixHttpServer(MixService mixService, FeedbackStore feedback, MoodService moods, int port,
                          Supplier<Map<String, Object>> status) throws IOException {
@@ -61,13 +75,20 @@ public class MixHttpServer {
         this.feedback = feedback;
         this.moods = moods;
         this.server = HttpServer.create(new InetSocketAddress(port), 0);
-        server.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
+        server.setExecutor(executor);
         server.createContext("/mix", this::handleMix);
         server.createContext("/why", this::handleWhy);
         server.createContext("/mood", this::handleMood);
         server.createContext("/mood/clear", this::handleClearMood);
+        server.createContext("/concerts", this::handleConcerts);
         server.createContext("/health", exchange -> respond(exchange, 200, Map.of("status", "ok")));
         server.createContext("/status", exchange -> respond(exchange, 200, status.get()));
+    }
+
+    /** Answers {@code /concerts}; without this it says concerts aren't set up. */
+    public void enableConcerts(ConcertFinder finder, Duration lookupTimeout) {
+        this.concertLookupTimeout = lookupTimeout;
+        this.concerts = finder;
     }
 
     public void start() {
@@ -129,6 +150,37 @@ public class MixHttpServer {
         } catch (RuntimeException e) {
             LOG.log(Level.ERROR, "Could not look up reason", e);
             respond(exchange, 500, Map.of("error", "internal error"));
+        }
+    }
+
+    private void handleConcerts(HttpExchange exchange) throws IOException {
+        if (!"GET".equals(exchange.getRequestMethod())) {
+            respond(exchange, 405, Map.of("error", "GET only"));
+            return;
+        }
+        ConcertFinder finder = concerts;
+        if (finder == null) {
+            respond(exchange, 404, Map.of("error", "concerts are not set up (no TICKETMASTER_API_KEY)"));
+            return;
+        }
+        String artist = first(queryParams(exchange.getRequestURI().getRawQuery()), "artist");
+        if (artist == null) {
+            respond(exchange, 200, Map.of("artists", finder.upcoming().stream().map(ArtistConcertsJson::from).toList()));
+            return;
+        }
+        // A slow lookup goes on in the background and is cached for the next request
+        CompletableFuture<List<Concert>> lookup = CompletableFuture.supplyAsync(() -> finder.forArtist(artist), executor);
+        try {
+            List<Concert> found = lookup.get(concertLookupTimeout.toMillis(), TimeUnit.MILLISECONDS);
+            respond(exchange, 200, new ArtistConcertsJson(artist, found.stream().map(ConcertJson::from).toList()));
+        } catch (TimeoutException e) {
+            respond(exchange, 504, Map.of("error", "concert lookup is taking too long"));
+        } catch (ExecutionException e) {
+            LOG.log(Level.WARNING, "Concert lookup for " + artist + " failed", e.getCause());
+            respond(exchange, 502, Map.of("error", "concert lookup failed"));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            respond(exchange, 503, Map.of("error", "interrupted"));
         }
     }
 
@@ -269,6 +321,23 @@ public class MixHttpServer {
             Mood.Style s = mood.style();
             return new MoodJson(mood.text(), s.tags(), s.artists(), s.fromYear(), s.toYear(), mood.setAt().toString(),
                     mood.setAt().plus(MoodService.LASTS).toString());
+        }
+    }
+
+    record ArtistConcertsJson(String artist, List<ConcertJson> concerts) {
+
+        static ArtistConcertsJson from(ArtistConcerts a) {
+            return new ArtistConcertsJson(a.artist(), a.concerts().stream().map(ConcertJson::from).toList());
+        }
+    }
+
+    /** Dates and times are the venue's local ones: {@code 2026-11-14}, {@code 20:00}. */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    record ConcertJson(String date, String time, String title, String venue, String city, String country, String url) {
+
+        static ConcertJson from(Concert c) {
+            return new ConcertJson(c.date().toString(), c.time() == null ? null : c.time().toString(), c.title(),
+                    c.venue(), c.city(), c.countryCode(), c.url().isEmpty() ? null : c.url());
         }
     }
 

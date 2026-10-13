@@ -10,14 +10,17 @@ import dj.adapter.lms.LmsPlaybackContext;
 import dj.adapter.lms.LmsPlayerActivity;
 import dj.adapter.lms.LmsTidalCatalog;
 import dj.adapter.sqlite.SqliteArtistProfileStore;
+import dj.adapter.sqlite.SqliteConcertStore;
 import dj.adapter.sqlite.SqliteDiscoveryStore;
 import dj.adapter.sqlite.SqliteMoodStore;
 import dj.adapter.sqlite.SqlitePlayHistory;
 import dj.adapter.stub.NoLlm;
+import dj.adapter.ticketmaster.TicketmasterConcerts;
 import dj.adapter.stub.NoMoodInterpreter;
 import dj.adapter.stub.NoSimilarity;
 import dj.domain.ArtistEnricher;
 import dj.domain.CandidateScorer;
+import dj.domain.ConcertFinder;
 import dj.domain.Discoverer;
 import dj.domain.HistoryRecorder;
 import dj.domain.MixService;
@@ -109,8 +112,14 @@ public final class App {
                 new MixSettings(config.candidatePoolSize(), config.llmTimeout(), config.seedLookupTimeout(),
                         config.discoveryShare()));
 
+        // Concert dates are in the venue's local time; "upcoming" is judged by the listener's date
+        Optional<ConcertFinder> concerts = config.ticketmasterApiKey().map(key -> new ConcertFinder(library, discovered,
+                new TicketmasterConcerts(key), new SqliteConcertStore(config.dataDir().resolve("concerts.db")),
+                Clock.systemDefaultZone(), config.concertMaxAge()));
+
         AtomicReference<ArtistEnricher.Result> lastEnrichment = new AtomicReference<>();
         AtomicReference<Discoverer.Result> lastDiscovery = new AtomicReference<>();
+        AtomicReference<ConcertFinder.Result> lastConcertScan = new AtomicReference<>();
         MixHttpServer server = new MixHttpServer(mixService, history, moods, config.port(), () -> {
             Map<String, Object> status = new LinkedHashMap<>();
             status.put("artistProfiles", profiles.size());
@@ -120,8 +129,12 @@ public final class App {
             status.put("discoveredTracks", discovered.allTracks().size());
             status.put("listenedArtists", discovered.listenedArtists().size());
             status.put("lastDiscovery", lastDiscovery.get());
+            status.put("concerts", concerts.isPresent());
+            status.put("artistsWithConcerts", concerts.map(c -> c.upcoming().size()).orElse(null));
+            status.put("lastConcertScan", lastConcertScan.get());
             return status;
         });
+        concerts.ifPresent(c -> server.enableConcerts(c, config.concertLookupTimeout()));
         server.start();
 
         // Warm the library snapshot so the first DSTM request doesn't pay for it.
@@ -133,7 +146,7 @@ public final class App {
             }
         });
 
-        ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(2);
+        ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(3);
         scheduler.scheduleWithFixedDelay(recorder::poll, 15, 10, TimeUnit.SECONDS);
         if (enricher.isPresent()) {
             scheduler.scheduleWithFixedDelay(() -> {
@@ -152,6 +165,19 @@ public final class App {
             }, 10, config.enrichmentInterval().toSeconds(), TimeUnit.SECONDS);
         } else {
             LOG.log(Level.WARNING, "LASTFM_API_KEY not set: no artist similarity, mixes use play counts and years only");
+        }
+
+        if (concerts.isPresent()) {
+            // After the library has loaded; independent of Last.fm
+            scheduler.scheduleWithFixedDelay(() -> {
+                try {
+                    lastConcertScan.set(concerts.get().scanAll());
+                } catch (RuntimeException e) {
+                    LOG.log(Level.WARNING, "Concert scan failed", e);
+                }
+            }, 120, config.concertMaxAge().toSeconds(), TimeUnit.SECONDS);
+        } else {
+            LOG.log(Level.INFO, "TICKETMASTER_API_KEY not set: no concert lookups");
         }
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
