@@ -7,6 +7,8 @@ package Plugins::DJ::Plugin;
 #   queue with a fresh mix and hands over to DSTM to keep it going, and "Play a mood...", which
 #   does the same for a request in the listener's own words ("mellow prog for Sunday morning").
 #   The mood keeps steering DJ's suggestions until it's cleared, Start DJ is used, or 4 hours pass.
+# - It shows upcoming concerts in Europe by the artist that's playing (track info, and a pop-up in
+#   Material Skin), and lists every concert by the artists the listener plays ("Upcoming concerts").
 #
 # The service does all the thinking; this plugin only collects seed tracks, makes one
 # non-blocking HTTP request and hands the returned URLs to LMS.
@@ -16,11 +18,13 @@ use base qw(Slim::Plugin::OPMLBased);
 
 use JSON::XS::VersionOneAndTwo;
 use Scalar::Util qw(blessed);
+use Time::Local qw(timelocal);
 use URI::Escape qw(uri_escape_utf8);
 
 use Slim::Menu::TrackInfo;
 use Slim::Networking::SimpleAsyncHTTP;
 use Slim::Utils::Cache;
+use Slim::Utils::DateTime;
 use Slim::Utils::Log;
 use Slim::Utils::Prefs;
 use Slim::Utils::Strings qw(cstring);
@@ -31,6 +35,11 @@ use constant NUM_MIX_TRACKS   => 5;
 use constant NUM_START_TRACKS => 10;
 use constant REASON_TTL       => 86400 * 30;
 use constant POPUP_SECONDS    => 20;
+use constant CONCERT_TTL      => 3600 * 12;
+use constant CONCERT_FAIL_TTL => 600;
+# An artist's concerts pop up at most this often per player, not for every song of an album
+use constant CONCERT_POPUP_EVERY => 3600 * 12;
+use constant POPUP_CONCERTS   => 3;
 
 my $log = Slim::Utils::Log->addLogCategory({
 	'category'     => 'plugin.dj',
@@ -41,11 +50,15 @@ my $log = Slim::Utils::Log->addLogCategory({
 my $prefs = preferences('plugin.dj');
 
 # Track URL => the reason DJ gave for suggesting it, from the mix responses. Track info menus
-# are built synchronously, so they read this instead of asking the service.
-my $reasons = Slim::Utils::Cache->new('dj', 1);
+# are built synchronously, so they read this instead of asking the service. Also holds
+# 'concerts:<artist>' => the artist's upcoming concerts, for the same reason.
+my $cache = Slim::Utils::Cache->new('dj', 1);
 
 # Player id => URL whose reason was last shown, so a song's reason pops up once
 my %lastPopup;
+
+# Player id => lower-case artist => when their concerts last popped up
+my %concertPopups;
 
 $prefs->init({
 	service_url => 'http://localhost:9010',
@@ -74,7 +87,12 @@ sub initPlugin {
 		func   => \&trackInfoReason,
 	) );
 
-	# Pop the reason up on Now Playing when a song DJ chose starts
+	Slim::Menu::TrackInfo->registerInfoProvider( djConcerts => (
+		after => 'djReason',
+		func  => \&trackInfoConcerts,
+	) );
+
+	# Pop the reason and the artist's concerts up on Now Playing when a song starts
 	Slim::Control::Request::subscribe(\&onNewSong, [['playlist'], ['newsong']]);
 
 	$class->SUPER::initPlugin(
@@ -120,6 +138,10 @@ sub handleFeed {
 		name => cstring($client, 'PLUGIN_DJ_WHY'),
 		type => 'link',
 		url  => \&whyThisTrack,
+	},{
+		name => cstring($client, 'PLUGIN_DJ_CONCERTS'),
+		type => 'link',
+		url  => \&upcomingConcerts,
 	});
 
 	my $player = $client ? $client->master->id : '';
@@ -167,23 +189,44 @@ sub onNewSong {
 	return if ($lastPopup{$client->id} || '') eq $url;
 	$lastPopup{$client->id} = $url;
 
-	my $reason = $reasons->get($url);
-	return unless $reason;
+	my $reason = $cache->get($url);
+	my $artist = _artistOf($client, $url, $song);
 
-	Slim::Control::Request::executeRequest(undef, [
-		'material-skin', 'send-notif',
-		'type:info',
-		'msg:' . cstring($client, 'PLUGIN_DJ_POPUP') . ' ' . $reason,
-		'client:' . $client->id,
-		'timeout:' . POPUP_SECONDS,
-	]);
+	my $popup = sub {
+		my ($concerts) = @_;
+
+		# The concerts may arrive after the next song has started
+		return unless ($lastPopup{$client->id} || '') eq $url;
+
+		my @parts;
+		push @parts, cstring($client, 'PLUGIN_DJ_POPUP') . ' ' . $reason if $reason;
+		if ($concerts && @$concerts && _concertPopupDue($client, $artist)) {
+			push @parts, _concertSummary($client, $concerts);
+		}
+		return unless @parts;
+
+		Slim::Control::Request::executeRequest(undef, [
+			'material-skin', 'send-notif',
+			'type:info',
+			'msg:' . join("  \x{00B7}  ", @parts),
+			'client:' . $client->id,
+			'timeout:' . POPUP_SECONDS,
+		]);
+	};
+
+	if ($artist) {
+		_concertsFor($artist, $popup);
+	}
+	else {
+		$popup->();
+	}
 }
 
 # Track info item with DJ's reason for a track, if DJ suggested it with one.
 sub trackInfoReason {
 	my ($client, $url, $track) = @_;
 
-	my $reason = $url && $reasons->get($url);
+	my $reason = $url && $cache->get($url);
 	return unless $reason;
 
 	# One labelled line ("Why DJ chose this: ..."), like Year; a folder needs an extra click.
@@ -193,6 +236,64 @@ sub trackInfoReason {
 		label => 'PLUGIN_DJ_WHY_CHOSEN',
 		name  => $reason,
 	};
+}
+
+# Track info folder with the artist's upcoming concerts in Europe. Built synchronously, so it
+# shows what's cached and starts a lookup for next time if nothing is.
+sub trackInfoConcerts {
+	my ($client, $url, $track, $remoteMeta) = @_;
+
+	my $artist = _artistOf($client, $url, $track, $remoteMeta) || return;
+	my $concerts = $cache->get(_concertKey($artist));
+	if (!$concerts) {
+		_concertsFor($artist, sub {});
+		return;
+	}
+	return unless @$concerts;
+
+	return {
+		name  => cstring($client, 'PLUGIN_DJ_CONCERTS_IN_EUROPE', scalar @$concerts),
+		items => [ map { { name => _concertLine($client, $_), type => 'text' } } @$concerts ],
+	};
+}
+
+# "Upcoming concerts": every artist the listener plays with concerts coming up, soonest first.
+sub upcomingConcerts {
+	my ($client, $cb) = @_;
+
+	my $text = sub {
+		$cb->({ items => [{ name => cstring($client, shift), type => 'text', wrap => 1 }] });
+	};
+
+	_callService('GET', '/concerts', {}, sub {
+		my $artists = shift->{artists} || [];
+		if (!@$artists) {
+			$text->('PLUGIN_DJ_CONCERTS_NONE');
+			return;
+		}
+
+		my @items;
+		for my $artist (@$artists) {
+			my $concerts = $artist->{concerts} || [];
+			next unless @$concerts;
+
+			# Keep the track info cache in step with what the service knows
+			$cache->set(_concertKey($artist->{artist}), $concerts, CONCERT_TTL);
+
+			my $next = $concerts->[0];
+			my $name = sprintf('%s: %s, %s', $artist->{artist}, _concertDate($next), $next->{city});
+			$name .= ' ' . cstring($client, 'PLUGIN_DJ_CONCERTS_MORE', @$concerts - 1) if @$concerts > 1;
+
+			push @items, {
+				name  => $name,
+				items => [ map { { name => _concertLine($client, $_), type => 'text' } } @$concerts ],
+			};
+		}
+
+		$cb->({ items => \@items });
+	}, sub {
+		$text->('PLUGIN_DJ_CONCERTS_FAILED');
+	});
 }
 
 # "Why this track?": the reason DJ gave for the song that's playing, if DJ chose it.
@@ -213,7 +314,7 @@ sub whyThisTrack {
 		return;
 	}
 
-	if (my $reason = $reasons->get($url)) {
+	if (my $reason = $cache->get($url)) {
 		$answer->($reason);
 		return;
 	}
@@ -371,7 +472,7 @@ sub _requestMix {
 			my $tracks = eval {
 				my $response = from_json($http->content);
 				for my $track (@{ $response->{tracks} || [] }) {
-					$reasons->set($track->{url}, $track->{reason}, REASON_TTL) if $track->{url} && $track->{reason};
+					$cache->set($track->{url}, $track->{reason}, REASON_TTL) if $track->{url} && $track->{reason};
 				}
 				[ grep { $_ } map { $_->{url} } @{ $response->{tracks} || [] } ];
 			};
@@ -430,6 +531,97 @@ sub _callService {
 	else {
 		$http->get($base . $path . '?' . $query);
 	}
+}
+
+# Calls $cb exactly once with the artist's upcoming concerts (an arrayref), from the cache or the
+# service. A failed lookup gives an empty list, and is retried after CONCERT_FAIL_TTL.
+sub _concertsFor {
+	my ($artist, $cb) = @_;
+
+	my $key = _concertKey($artist);
+	if (my $concerts = $cache->get($key)) {
+		$cb->($concerts);
+		return;
+	}
+
+	_callService('GET', '/concerts', { artist => $artist }, sub {
+		my $concerts = shift->{concerts} || [];
+		$cache->set($key, $concerts, CONCERT_TTL);
+		$cb->($concerts);
+	}, sub {
+		$cache->set($key, [], CONCERT_FAIL_TTL);
+		$cb->([]);
+	});
+}
+
+sub _concertKey { 'concerts:' . lc(shift) }
+
+sub _concertPopupDue {
+	my ($client, $artist) = @_;
+
+	my $shown = $concertPopups{$client->id} ||= {};
+	my $last  = $shown->{lc $artist} || 0;
+	return if time() - $last < CONCERT_POPUP_EVERY;
+
+	$shown->{lc $artist} = time();
+	return 1;
+}
+
+# "On tour: 14.11.2026 Oslo, 01.12.2026 London, 03.12.2026 Paris (+9 more)"
+sub _concertSummary {
+	my ($client, $concerts) = @_;
+
+	my @shown = grep { defined } @$concerts[0 .. POPUP_CONCERTS - 1];
+	my $text = cstring($client, 'PLUGIN_DJ_CONCERTS_POPUP') . ' '
+		. join(', ', map { _concertDate($_) . ' ' . $_->{city} } @shown);
+	$text .= ' ' . cstring($client, 'PLUGIN_DJ_CONCERTS_MORE', @$concerts - @shown) if @$concerts > @shown;
+
+	return $text;
+}
+
+# "14.11.2026 20:00 · Sentrum Scene, Oslo (NO)"
+sub _concertLine {
+	my ($client, $concert) = @_;
+
+	my $when = _concertDate($concert);
+	$when .= ' ' . $concert->{time} if $concert->{time};
+	my $where = join(', ', grep { $_ } $concert->{venue}, $concert->{city});
+	$where .= " ($concert->{country})" if $concert->{country};
+
+	return "$when \x{00B7} $where";
+}
+
+# The venue's local date (YYYY-MM-DD) in the server's short date format
+sub _concertDate {
+	my ($concert) = @_;
+
+	my ($y, $m, $d) = ($concert->{date} || '') =~ /^(\d{4})-(\d\d)-(\d\d)$/ or return $concert->{date} || '';
+	my $epoch = eval { timelocal(0, 0, 12, $d, $m - 1, $y) } or return $concert->{date};
+
+	return Slim::Utils::DateTime::shortDateF($epoch);
+}
+
+# The artist of a track, for library tracks and ones played straight from a streaming service.
+sub _artistOf {
+	my ($client, $url, $track, $remoteMeta) = @_;
+
+	my $artist = $remoteMeta && $remoteMeta->{artist};
+
+	if (!$artist && blessed($track) && $track->can('artistName')) {
+		$artist = eval { $track->artistName };
+	}
+
+	if (!$artist && $url && Slim::Music::Info::isRemoteURL($url)) {
+		my $handler = Slim::Player::ProtocolHandlers->handlerForURL($url);
+		if ($handler && $handler->can('getMetadataFor')) {
+			my $meta = eval { $handler->getMetadataFor($client, $url) };
+			$artist = $meta->{artist} if ref $meta eq 'HASH';
+		}
+	}
+
+	return unless $artist;
+	$artist =~ s/^\s+|\s+$//g;
+	return $artist;
 }
 
 # Ids of the last few tracks in the queue.

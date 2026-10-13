@@ -40,8 +40,8 @@ cat > repo.xml <<XML
 		<plugin name="DJ" version="$version" minTarget="8.0" maxTarget="*">
 			<title lang="EN">DJ (AI suggestions)</title>
 			<title lang="NO">DJ (AI-forslag)</title>
-			<desc lang="EN">AI DJ: Start DJ, moods in your own words and Don't Stop The Music suggestions, with a reason for every song. Needs the dj service (Docker image geireilertsen/dj).</desc>
-			<desc lang="NO">AI-DJ: Start DJ, stemninger med egne ord og forslag til Ikke stopp musikken, med en begrunnelse for hver låt. Krever dj-tjenesten (Docker-bildet geireilertsen/dj).</desc>
+			<desc lang="EN">AI DJ: Start DJ, moods in your own words and Don't Stop The Music suggestions, with a reason for every song, and upcoming concerts in Europe by the artists you play. Needs the dj service (Docker image geireilertsen/dj).</desc>
+			<desc lang="NO">AI-DJ: Start DJ, stemninger med egne ord og forslag til Ikke stopp musikken, med en begrunnelse for hver låt, og kommende konserter i Europa med artistene du spiller. Krever dj-tjenesten (Docker-bildet geireilertsen/dj).</desc>
 			<creator>Geir Eilertsen</creator>
 			<category>musicservices</category>
 			<link>https://github.com/$repo</link>

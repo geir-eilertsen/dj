@@ -76,3 +76,27 @@ PLUGIN_DJ_WHY_CHOSEN
 PLUGIN_DJ_POPUP
 	EN	DJ:
 	NO	DJ:
+
+PLUGIN_DJ_CONCERTS
+	EN	Upcoming concerts
+	NO	Kommende konserter
+
+PLUGIN_DJ_CONCERTS_IN_EUROPE
+	EN	Concerts in Europe (%s)
+	NO	Konserter i Europa (%s)
+
+PLUGIN_DJ_CONCERTS_NONE
+	EN	No upcoming concerts found yet. DJ checks the artists you play once a day.
+	NO	Ingen kommende konserter funnet ennå. DJ sjekker artistene du spiller én gang i døgnet.
+
+PLUGIN_DJ_CONCERTS_FAILED
+	EN	Could not get concerts from the DJ service. Is TICKETMASTER_API_KEY set?
+	NO	Fikk ikke konserter fra DJ-tjenesten. Er TICKETMASTER_API_KEY satt?
+
+PLUGIN_DJ_CONCERTS_POPUP
+	EN	On tour:
+	NO	På turné:
+
+PLUGIN_DJ_CONCERTS_MORE
+	EN	(+%s more)
+	NO	(+%s til)
