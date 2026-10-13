@@ -149,9 +149,12 @@ service → `http://localhost:9000`).
 - **Done:** step 1 skeleton; step 2 Last.fm similarity + history scoring; Start DJ button +
   icon (`tools/Icon.java`); artist spreading/cap; song-version dedupe; following streamed
   music; TIDAL discovery (~40%); per-player time-of-day starts; skip penalties; Christmas filter.
-- **Next ideas:** Spotify as a fallback catalogue (Spotty's JSON-RPC search behaves like an
-  interactive menu with history: needs investigation); a "why this track?" endpoint showing
-  score parts.
+- **Next ideas:** a "why this track?" endpoint showing score parts.
+- **Dropped (user's decision, 2026-10-13): Spotify as a fallback catalogue.** Spotty has no
+  search command; its menu search (`spotty items`, untyped) saves every query in the user's
+  Spotify search history (`spotify_recent_search`, max 50; only typed searches skip it, and
+  those are reachable only through an untyped one). The alternative needs the user's own
+  Spotify developer app. Discovery stays TIDAL-only.
 - **Step 3 (done):** Claude Haiku picks/orders with reasons; "Why this track?" in the DJ menu.
   Local Ollama was dropped: the server has 3 GB RAM and no GPU. An `OllamaLlm` for a LAN
   machine could still implement `LlmPort`. Reasons also show in track info and as a
