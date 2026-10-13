@@ -450,7 +450,9 @@ class MixServiceTest {
         assertEquals(ids("1", "2"), ids(mix(List.of(), 5).tracks()));
 
         moods.save(PLAYER, new Mood("julemusikk", Mood.Style.NONE, Instant.now()));
-        assertTrue(ids(mix(List.of(), 5).tracks()).contains(TrackId.of("9")));
+        // Asked for: Christmas songs come first, then the rest.
+        assertEquals(List.of(TrackId.of("9"), TrackId.of("tidal://10.flc"), TrackId.of("1")),
+                ids(mix(List.of(), 3).tracks()));
     }
 
     @Test

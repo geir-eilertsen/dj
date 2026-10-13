@@ -53,9 +53,11 @@ final class ChristmasSongs {
 
     /** Whether Christmas songs may be suggested now, for this mood and these seeds. */
     static boolean wanted(LocalDate date, Mood.Style mood, String moodText, List<Track> seeds) {
-        return inSeason(date)
-                || mentionsChristmas(moodText)
-                || mood.tags().stream().anyMatch(ChristmasSongs::mentionsChristmas)
-                || seeds.stream().anyMatch(ChristmasSongs::isChristmasSong);
+        return inSeason(date) || asked(mood, moodText) || seeds.stream().anyMatch(ChristmasSongs::isChristmasSong);
+    }
+
+    /** Whether the mood asks for Christmas music, so Christmas songs should come first. */
+    static boolean asked(Mood.Style mood, String moodText) {
+        return mentionsChristmas(moodText) || mood.tags().stream().anyMatch(ChristmasSongs::mentionsChristmas);
     }
 }

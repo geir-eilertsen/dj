@@ -48,7 +48,7 @@ import java.util.function.Predicate;
  * source exists), then library tracks and discovered tracks ranked by {@link CandidateScorer}
  * and interleaved so about {@link MixSettings#discoveryShare()} of the mix is discovered music,
  * when relevant discovered music exists. Christmas songs are left out outside the season unless
- * the listener asks for them ({@link ChristmasSongs}). The LLM only picks and orders among the
+ * the listener asks for them ({@link ChristmasSongs}); a mood asking for them puts them first. The LLM only picks and orders among the
  * candidates, under a hard timeout; if it is slow, fails or answers with nothing usable, candidate order is
  * used instead. Only a failing library prevents a mix.
  */
@@ -176,6 +176,14 @@ public final class MixService {
         Predicate<Track> allowed = t -> christmas || !ChristmasSongs.isChristmasSong(t);
 
         Map<TrackId, Track> pool = new LinkedHashMap<>();
+        // Artists aren't tagged "christmas", so asking for Christmas music wouldn't rank its songs.
+        if (ChristmasSongs.asked(mood, brief.mood().map(Mood::text).orElse(""))) {
+            List<Track> christmasSongs = new ArrayList<>(all);
+            christmasSongs.addAll(discovered.allTracks());
+            christmasSongs.removeIf(t -> !ChristmasSongs.isChristmasSong(t));
+            scorer.rank(christmasSongs, seeds, queue, poolSize, Double.NEGATIVE_INFINITY, mood)
+                    .forEach(t -> pool.putIfAbsent(t.id(), t));
+        }
         for (Track track : neighbours(request.seeds(), poolSize)) {
             if (pool.size() < poolSize && !request.seeds().contains(track.id())
                     && !queued.containsKey(track.id()) && allowed.test(track)) {
