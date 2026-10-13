@@ -79,6 +79,13 @@ Ports (`dj.domain.port`):
 - `ConcertSource`: upcoming concerts. Adapter `TicketmasterConcerts` (Discovery API: `attractions.json`
   exact-name match, most upcoming events wins; then `events.json?attractionId=`, music only; skips
   cancelled, dateless and duplicate date+venue listings; 250 ms spacing; key never in messages).
+  Adapter `MadnessLiveConcerts` (madnesslive.es, Spanish promoter, no API): crawls the PrestaShop
+  listing `/es/12-entradas` (+ `rel=next`) and each show page, 1 req/s, once per max age; title
+  "A + B + C (City)" = bill (artist matches anywhere on it), "Banda" feature = headliner, first line
+  of the short description = Spanish date, second = venue; "CANCELADO:" skipped; no times (door times,
+  mistyped). Failed crawl keeps the last catalogue, retries after 10 min. `DJ_MADNESS_LIVE` (1).
+  `CombinedConcertSource` (domain) merges sources (Ticketmaster first), one show per date+city;
+  fails only if all fail.
 - `ConcertStore`: latest lookup per artist (empty ones too). Adapter `SqliteConcertStore` (`concerts.db`, in memory).
 - `SimilarityPort`: acoustic neighbours. Stub (`NoSimilarity`); Bliss can't analyse streams.
 - `LlmPort`: picks and orders candidates given a `MixBrief` (context, fresh, mood), returning
@@ -145,7 +152,7 @@ Config via env vars: `LMS_URL` (`http://localhost:9000`), `DJ_PORT` (9010),
 `DJ_DATA_DIR` (`data`; `/data` in Docker, volume `dj-data`), `LASTFM_API_KEY` (`.env`, never
 logged), `DJ_ENRICH_INTERVAL_HOURS` (24), `DJ_ARTIST_MAX_AGE_DAYS` (30),
 `DJ_SEED_LOOKUP_MS` (1500), `DJ_DISCOVERY_SHARE` (0.4; 0 disables discovery),
-`TICKETMASTER_API_KEY` (`.env`), `DJ_CONCERT_LOOKUP_MS` (4000), `DJ_CONCERT_MAX_AGE_HOURS` (24),
+`TICKETMASTER_API_KEY` (`.env`), `DJ_MADNESS_LIVE` (1), `DJ_CONCERT_LOOKUP_MS` (4000), `DJ_CONCERT_MAX_AGE_HOURS` (24),
 `ANTHROPIC_API_KEY` (`.env`; must be a **workspace-scoped** key, an unscoped one gets 400),
 `DJ_LLM_MODEL` (`claude-haiku-5-5`), `DJ_LLM_LANGUAGE` (English), `DJ_LLM_TIMEOUT_MS` (5000).
 Plugin timeout default 10 s (prefs migration 1 raised saved 5 s values).
@@ -167,7 +174,7 @@ service → `http://localhost:9000`).
 - **Done:** step 1 skeleton; step 2 Last.fm similarity + history scoring; Start DJ button +
   icon (`tools/Icon.java`); artist spreading/cap; song-version dedupe; following streamed
   music; TIDAL discovery (~40%); per-player time-of-day starts; skip penalties; Christmas filter;
-  concerts in Europe (Ticketmaster).
+  concerts in Europe (Ticketmaster, Madness Live!).
 - **Next ideas:** a "why this track?" endpoint showing score parts.
 - **Dropped (user's decision, 2026-10-13): Spotify as a fallback catalogue.** Spotty has no
   search command; its menu search (`spotty items`, untyped) saves every query in the user's

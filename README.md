@@ -29,7 +29,7 @@ What it does today:
 - **Play a mood…** takes a request in your own words ("mellow prog for Sunday morning") and
   steers the music by it for the next 4 hours.
 - Christmas songs stay out of the mix until Advent, unless you ask for them.
-- Upcoming concerts in Europe (from Ticketmaster) by the artist that's playing, in track info
+- Upcoming concerts in Europe (from Ticketmaster and the Spanish promoter Madness Live!) by the artist that's playing, in track info
   and as a pop-up, plus a list of every concert by the artists you play.
 
 See `CLAUDE.md` for the architecture and roadmap.
@@ -191,7 +191,8 @@ configured, and the last enrichment and discovery results. Errors return
 | `ANTHROPIC_API_KEY` | (none) | Enables Claude: picks, reasons, mood understanding. Put it in `.env` |
 | `DJ_LLM_MODEL` | `claude-haiku-5-5` | Claude model |
 | `DJ_LLM_LANGUAGE` | `English` | Language of the reasons |
-| `TICKETMASTER_API_KEY` | (none) | Enables concert lookups. Put it in `.env` |
+| `TICKETMASTER_API_KEY` | (none) | Concerts from Ticketmaster. Put it in `.env` |
+| `DJ_MADNESS_LIVE` | `1` | Concerts from madnesslive.es (`0` turns it off) |
 | `DJ_CONCERT_LOOKUP_MS` | `4000` | Max wait for looking up the playing artist's concerts |
 | `DJ_CONCERT_MAX_AGE_HOURS` | `24` | How long a concert lookup is reused; also how often all artists are checked |
 
@@ -223,9 +224,9 @@ docker compose up -d
 Each mix costs roughly $0.0005 with Claude Haiku. `DJ_LLM_MODEL`, `DJ_LLM_LANGUAGE` (reason
 language, default English) and `DJ_LLM_TIMEOUT_MS` (default 5000) tune it.
 
-### Ticketmaster
+### Concert sources
 
-Concerts come from the [Ticketmaster Discovery API](https://developer.ticketmaster.com)
+**Ticketmaster.** Most concerts come from the [Ticketmaster Discovery API](https://developer.ticketmaster.com)
 (free: 5000 requests a day). Create an app there, then:
 
 ```
@@ -238,6 +239,12 @@ every artist you've played from TIDAL/Spotify: about two requests per artist on 
 the others. Only concerts in Europe are kept. Artists are matched by exact name, so a band
 Ticketmaster lists under another name is missed, and two bands sharing a name can be mixed up.
 Shows sold only through other ticket sellers aren't included.
+
+**Madness Live!** ([madnesslive.es](https://www.madnesslive.es)), a Spanish rock and metal
+promoter that sells its own tickets, needs no key. It has no API: DJ reads its ticket shop once
+a day (one page a second, about 80 pages) and finds an artist anywhere on a bill, support acts
+too. A site redesign would make it find nothing until the parser is updated; the last good
+catalogue is kept meanwhile. Festival passes are skipped (their line-ups aren't on the page).
 
 ## LMS plugin
 

@@ -72,7 +72,7 @@ add `https://raw.githubusercontent.com/geir-eilertsen/dj/main/repo.xml`, then ti
 |---|---|---|
 | `LASTFM_API_KEY` | [last.fm/api/account/create](https://www.last.fm/api/account/create) (free) | DJ only knows play counts and release years |
 | `ANTHROPIC_API_KEY` | [console.anthropic.com](https://console.anthropic.com), created **inside a workspace** | No reasons, no Claude ordering; moods by keywords only |
-| `TICKETMASTER_API_KEY` | [developer.ticketmaster.com](https://developer.ticketmaster.com) (free) | No concert dates |
+| `TICKETMASTER_API_KEY` | [developer.ticketmaster.com](https://developer.ticketmaster.com) (free) | Concert dates only from Madness Live! (Spain) |
 
 Claude Haiku costs roughly $0.0005 per mix. Keep keys in `.env`, not in the compose file. DJ
 never logs them.
