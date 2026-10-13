@@ -6,7 +6,7 @@
 
     <groupId>dj</groupId>
     <artifactId>dj-service</artifactId>
-    <version>0.1.0-SNAPSHOT</version>
+    <version>0.8.0</version>
     <packaging>jar</packaging>
 
     <name>dj suggestion service</name>

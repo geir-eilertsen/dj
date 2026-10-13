@@ -24,10 +24,83 @@ What it does today:
 - Skipped suggestions count against the song (and a little against the artist).
 
 - Claude (Haiku) picks and orders the final tracks so the music flows and fits the time of
-  day, with a one-line reason for each: see **Why this track?** in the DJ menu. Without an
+  day, with a one-line reason for each, shown on Now Playing as each song starts. Without an
   API key, or if Claude is slow or unreachable, DJ's own ranking is used.
+- **Play a mood…** takes a request in your own words ("mellow prog for Sunday morning") and
+  steers the music by it for the next 4 hours.
+- Christmas songs stay out of the mix until Advent, unless you ask for them.
 
 See `CLAUDE.md` for the architecture and roadmap.
+
+## Getting started
+
+You need Lyrion Music Server (tested with 9.1) and Docker on the same machine. The service
+image is [`geireilertsen/dj`](https://hub.docker.com/r/geireilertsen/dj), for PCs (amd64) and
+64-bit Raspberry Pi OS (arm64).
+
+**1. Get the keys (optional, both recommended).**
+
+- A [Last.fm API key](https://www.last.fm/api/account/create) (free) gives DJ artist
+  similarity and styles. Without it DJ only knows play counts and release years.
+- An [Anthropic API key](https://console.anthropic.com) lets Claude pick the final order,
+  give reasons and understand moods (about $0.0005 per mix). Create it **inside a
+  workspace**; keys outside one are rejected. Without it DJ uses its own ranking.
+
+**2. Run the service.** Save this as `docker-compose.yml`:
+
+```yaml
+services:
+  dj:
+    image: geireilertsen/dj:latest
+    container_name: dj
+    network_mode: host        # reaches LMS on localhost:9000; the plugin reaches DJ on localhost:9010
+    environment:
+      - TZ=Europe/Oslo        # your time zone: DJ picks music by time of day
+      - LMS_URL=http://localhost:9000
+    env_file:
+      - path: .env            # LASTFM_API_KEY=... and ANTHROPIC_API_KEY=..., one per line
+        required: false
+    volumes:
+      - dj-data:/data
+    restart: unless-stopped
+
+volumes:
+  dj-data:
+```
+
+```sh
+docker compose up -d
+curl localhost:9010/health      # {"status":"ok"}
+```
+
+In the background DJ now looks up your artists on Last.fm (a few minutes for a thousand
+artists) and, if LMS's TIDAL plugin is signed in, finds new music by them and similar
+artists. `curl localhost:9010/status` shows how far it has come.
+
+**3. Install the LMS plugin.** Copy the `plugin` folder into LMS's plugin folder as `DJ`, then
+restart LMS:
+
+```sh
+git clone https://github.com/geir-eilertsen/dj.git
+# LMS in Docker (container "lms"):
+docker exec lms mkdir -p /config/cache/InstalledPlugins/Plugins/DJ
+docker cp dj/plugin/. lms:/config/cache/InstalledPlugins/Plugins/DJ/
+docker restart lms
+# LMS installed from the Debian/Ubuntu package:
+sudo cp -r dj/plugin /var/lib/squeezeboxserver/cache/InstalledPlugins/Plugins/DJ
+sudo chown -R squeezeboxserver: /var/lib/squeezeboxserver/cache/InstalledPlugins/Plugins/DJ
+sudo systemctl restart lyrionmusicserver
+```
+
+If the service runs on another machine, set its address under *Settings → Advanced → DJ*
+(and use `ports: ["9010:9010"]` instead of host networking).
+
+**4. Play.** In Material Skin open **Apps → DJ → Start DJ** (or **Play a mood…**). DJ replaces
+the queue, starts playing and becomes the player's Don't Stop The Music mixer, so it keeps
+adding music when the queue runs low. Long-press **Start DJ** to pin it to the home screen.
+
+To use DJ only when a queue runs out, choose it per player under *Settings → Player →
+Don't Stop The Music → "DJ (AI suggestions)"*.
 
 ## Layout
 
@@ -164,7 +237,7 @@ To uninstall, remove that directory and restart LMS (or uninstall it from *Setti
 
 1. *Settings → Manage Plugins*: check that **DJ** and **Don't Stop The Music** are enabled.
 2. *Settings → Advanced → DJ*: set the service URL (default `http://localhost:9010`)
-   and the timeout (default 5 s).
+   and the timeout (default 10 s).
 3. Select the mixer for a player. Either use the UI (*Settings → Player → (choose player) →
    Don't Stop The Music → "DJ (AI suggestions)"*; in Material Skin it's the player's settings
    dialog), or the CLI:
