@@ -4,17 +4,17 @@
 		<title lang="EN">DJ</title>
 	</details>
 	<plugins>
-		<plugin name="DJ" version="0.7.0" minTarget="8.0" maxTarget="*">
+		<plugin name="DJ" version="0.8.0" minTarget="8.0" maxTarget="*">
 			<title lang="EN">DJ (AI suggestions)</title>
 			<title lang="NO">DJ (AI-forslag)</title>
-			<desc lang="EN">AI DJ: Start DJ, moods in your own words and Don't Stop The Music suggestions, with a reason for every song. Needs the dj service (Docker image geireilertsen/dj).</desc>
-			<desc lang="NO">AI-DJ: Start DJ, stemninger med egne ord og forslag til Ikke stopp musikken, med en begrunnelse for hver låt. Krever dj-tjenesten (Docker-bildet geireilertsen/dj).</desc>
+			<desc lang="EN">AI DJ: Start DJ, moods in your own words and Don't Stop The Music suggestions, with a reason for every song, and upcoming concerts in Europe by the artists you play. Needs the dj service (Docker image geireilertsen/dj).</desc>
+			<desc lang="NO">AI-DJ: Start DJ, stemninger med egne ord og forslag til Ikke stopp musikken, med en begrunnelse for hver låt, og kommende konserter i Europa med artistene du spiller. Krever dj-tjenesten (Docker-bildet geireilertsen/dj).</desc>
 			<creator>Geir Eilertsen</creator>
 			<category>musicservices</category>
 			<link>https://github.com/geir-eilertsen/dj</link>
 			<icon>https://raw.githubusercontent.com/geir-eilertsen/dj/main/plugin/HTML/EN/plugins/DJ/html/images/icon.png</icon>
-			<url>https://github.com/geir-eilertsen/dj/releases/download/plugin-v0.7.0/DJ-0.7.0.zip</url>
-			<sha>a3e993341da377d1f3515eb7568d07f740cdfcf2</sha>
+			<url>https://github.com/geir-eilertsen/dj/releases/download/plugin-v0.8.0/DJ-0.8.0.zip</url>
+			<sha>46637d270d4e847147b221280f8b32b1c735e8d8</sha>
 		</plugin>
 	</plugins>
 </extensions>
