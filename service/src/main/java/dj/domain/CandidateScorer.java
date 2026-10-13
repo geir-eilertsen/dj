@@ -2,6 +2,7 @@ package dj.domain;
 
 import dj.domain.model.ArtistNames;
 import dj.domain.model.ArtistProfile;
+import dj.domain.model.Mood;
 import dj.domain.model.SongTitles;
 import dj.domain.model.Track;
 import dj.domain.model.TrackId;
@@ -20,10 +21,12 @@ import java.util.function.Supplier;
 import java.util.random.RandomGenerator;
 
 /**
- * Ranks library tracks as candidates to follow the seeds.
+ * Ranks library tracks as candidates to follow the seeds and fit the listener's mood.
  *
  * <p>Each track is scored on similar-artist match, style-tag overlap, play count, year closeness
- * and a little noise. Tracks already in the queue (or the same song from another service) are
+ * and a little noise. Artist match and style overlap are measured against the seeds and, when the
+ * listener has set a mood, against the mood's artists and tags, which then count most; tracks
+ * outside the mood's era are penalised. Tracks already in the queue (or the same song from another service) are
  * excluded; artists heard in the last few tracks and recently skipped songs and artists are
  * penalised; and the final order is spread across artists so the top of the list isn't one
  * artist's discography.
@@ -66,7 +69,19 @@ public final class CandidateScorer {
      */
     public List<Track> rank(Collection<Track> library, List<Track> seeds, List<Track> queue, int limit,
                             double minRelevance) {
+        return rank(library, seeds, queue, limit, minRelevance, Mood.Style.NONE);
+    }
+
+    /**
+     * Like {@link #rank(Collection, List, List, int, double)}, also fitting the listener's mood.
+     * With a mood and no seeds, the mood alone decides relevance.
+     */
+    public List<Track> rank(Collection<Track> library, List<Track> seeds, List<Track> queue, int limit,
+                            double minRelevance, Mood.Style mood) {
         SeedProfile seed = seedProfile(seeds);
+        MoodProfile wanted = moodProfile(mood);
+        // Closeness to the seeds' years follows the seeds, so it counts as little as they do.
+        double seedShare = wanted.isEmpty() ? 1 : 1 - weights.mood();
         Set<String> queuedSongs = new HashSet<>();
         Set<TrackId> queuedIds = new HashSet<>();
         for (Track track : queue) {
@@ -89,15 +104,19 @@ public final class CandidateScorer {
             }
             String artist = ArtistNames.key(track.artist());
             String group = ArtistNames.groupKey(track.artist());
-            double score = artistScores.computeIfAbsent(artist, a -> artistScore(seed, a));
+            double score = artistScores.computeIfAbsent(artist, a -> artistScore(seed, wanted, a));
             if (score < minRelevance) {
                 continue;
             }
             score += weights.plays() * (maxPlays > 0 ? Math.log1p(track.playCount()) / maxPlays : 0);
-            score += weights.year() * yearCloseness(seed.year, track.year());
+            score += seedShare * weights.year() * yearCloseness(seed.year, track.year());
             score += weights.jitter() * random.nextDouble();
-            if (recentArtists.contains(group)) {
+            // Artists the listener asked for may be heard again.
+            if (recentArtists.contains(group) && !wanted.groups.contains(group)) {
                 score *= weights.recentArtistFactor();
+            }
+            if (!mood.fitsEra(track.year())) {
+                score *= weights.outOfEraFactor();
             }
             score *= penalties.factor(track, weights);
             scored.add(new Scored(track, group, score));
@@ -105,12 +124,36 @@ public final class CandidateScorer {
         return spreadArtists(scored, limit);
     }
 
-    private double artistScore(SeedProfile seed, String artist) {
-        if (seed.artists.isEmpty()) {
-            return 0;
-        }
+    private double artistScore(SeedProfile seed, MoodProfile mood, String artist) {
         Map<String, Double> tags = profiles.find(artist).map(CandidateScorer::tagVector).orElse(Map.of());
-        return weights.artist() * artistSimilarity(seed, artist) + weights.tags() * cosine(seed.tags, tags);
+        double fromSeeds = seed.artists.isEmpty() ? 0
+                : weights.artist() * artistSimilarity(seed, artist) + weights.tags() * cosine(seed.tags, tags);
+        if (mood.isEmpty()) {
+            return fromSeeds;
+        }
+        double fromMood = weights.artist() * moodArtistSimilarity(mood, artist) + weights.tags() * cosine(mood.tags, tags);
+        return seed.artists.isEmpty() ? fromMood : (1 - weights.mood()) * fromSeeds + weights.mood() * fromMood;
+    }
+
+    /** An artist the listener asked for matches fully; otherwise as similar as profiles say. */
+    private double moodArtistSimilarity(MoodProfile mood, String artist) {
+        double best = 0;
+        for (String wanted : mood.artists) {
+            best = Math.max(best, wanted.equals(artist) ? 1 : Math.max(match(wanted, artist), match(artist, wanted)));
+        }
+        return best;
+    }
+
+    private static MoodProfile moodProfile(Mood.Style mood) {
+        Set<String> artists = new HashSet<>();
+        Set<String> groups = new HashSet<>();
+        mood.artists().forEach(a -> {
+            artists.add(ArtistNames.key(a));
+            groups.add(ArtistNames.groupKey(a));
+        });
+        Map<String, Double> tags = new HashMap<>();
+        mood.tags().forEach(t -> tags.put(t, 1.0));
+        return new MoodProfile(artists, groups, tags);
     }
 
     private double artistSimilarity(SeedProfile seed, String artist) {
@@ -226,6 +269,14 @@ public final class CandidateScorer {
     }
 
     private record SeedProfile(Map<String, Double> artists, Map<String, Double> tags, double year) {
+    }
+
+    /** {@code artists} are name keys, {@code groups} group keys. */
+    private record MoodProfile(Set<String> artists, Set<String> groups, Map<String, Double> tags) {
+
+        boolean isEmpty() {
+            return artists.isEmpty() && tags.isEmpty();
+        }
     }
 
     /** {@code artist} is the group key: side projects count as the same artist. */

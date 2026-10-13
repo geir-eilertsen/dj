@@ -15,16 +15,20 @@ package dj.domain;
  * @param seedDecay          weight multiplier per step back in the seed list (latest seed counts most)
  * @param skippedSong        score multiplier per (fresh) skip of the song
  * @param skippedArtist      score multiplier per (fresh) skip of any song by the artist
+ * @param mood               share (0..1) of the artist score that comes from the listener's mood
+ *                           rather than the seeds, when both exist
+ * @param outOfEraFactor     score multiplier for tracks outside the mood's era
  */
 public record ScoringWeights(double artist, double tags, double plays, double year, double jitter,
                              double sameArtist, double recentArtistFactor, double repeatArtistFactor,
-                             int recentArtistWindow, double seedDecay, double skippedSong, double skippedArtist) {
+                             int recentArtistWindow, double seedDecay, double skippedSong, double skippedArtist,
+                             double mood, double outOfEraFactor) {
 
     public static final ScoringWeights DEFAULTS =
-            new ScoringWeights(1.0, 0.8, 0.2, 0.15, 0.25, 0.6, 0.3, 0.5, 4, 0.7, 0.4, 0.85);
+            new ScoringWeights(1.0, 0.8, 0.2, 0.15, 0.25, 0.6, 0.3, 0.5, 4, 0.7, 0.4, 0.85, 0.75, 0.4);
 
     public ScoringWeights withJitter(double jitter) {
         return new ScoringWeights(artist, tags, plays, year, jitter, sameArtist, recentArtistFactor,
-                repeatArtistFactor, recentArtistWindow, seedDecay, skippedSong, skippedArtist);
+                repeatArtistFactor, recentArtistWindow, seedDecay, skippedSong, skippedArtist, mood, outOfEraFactor);
     }
 }

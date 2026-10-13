@@ -1,5 +1,6 @@
 package dj.domain;
 
+import dj.domain.model.Mood;
 import dj.domain.model.Track;
 import org.junit.jupiter.api.Test;
 
@@ -211,6 +212,71 @@ class CandidateScorerTest {
     }
 
     /** No jitter, so rankings are deterministic. */
+    @Test
+    void withAMoodAndNoSeedsTheMoodAloneDecides() {
+        Mood.Style prog = new Mood.Style(List.of("progressive rock"), List.of(), 0, 0);
+
+        List<Track> ranked = scorer().rank(List.of(abba, katatonia, porcupineTree, stevenWilson),
+                List.of(), List.of(), 10, Double.NEGATIVE_INFINITY, prog);
+
+        assertEquals(ids("11", "12"), Tracks.ids(ranked).subList(0, 2));
+    }
+
+    @Test
+    void theMoodOutweighsTheSeeds() {
+        Mood.Style disco = new Mood.Style(List.of("disco"), List.of(), 0, 0);
+
+        List<Track> ranked = scorer().rank(List.of(katatonia, abba), List.of(opethSeed), List.of(opethSeed), 10,
+                Double.NEGATIVE_INFINITY, disco);
+
+        assertEquals(ids("13", "10"), Tracks.ids(ranked));
+    }
+
+    @Test
+    void artistsNamedInTheMoodAndTheirSimilarArtistsComeFirst() {
+        Mood.Style likeOpeth = new Mood.Style(List.of(), List.of("Opeth"), 0, 0);
+        Track opeth = track("15", "Opeth", 2008, 0);
+
+        List<Track> ranked = scorer().rank(List.of(abba, porcupineTree, katatonia, opeth),
+                List.of(), List.of(), 10, Double.NEGATIVE_INFINITY, likeOpeth);
+
+        assertEquals(ids("15", "10", "11", "13"), Tracks.ids(ranked));
+    }
+
+    @Test
+    void anArtistAskedForIsNotPenalisedForJustHavingPlayed() {
+        Mood.Style likeOpeth = new Mood.Style(List.of(), List.of("Opeth"), 0, 0);
+        Track opeth = track("15", "Opeth", 2008, 0);
+
+        List<Track> ranked = scorer().rank(List.of(katatonia, opeth), List.of(), List.of(opethSeed), 10,
+                Double.NEGATIVE_INFINITY, likeOpeth);
+
+        assertEquals(ids("15", "10"), Tracks.ids(ranked));
+    }
+
+    @Test
+    void tracksOutsideTheMoodsEraComeLast() {
+        Mood.Style eighties = new Mood.Style(List.of("progressive rock"), List.of(), 1980, 1989);
+        Track old = track("20", "Porcupine Tree", 1999, 0);
+        Track eightiesWilson = track("21", "Steven Wilson", 1985, 0);
+        Track undated = track("22", "Steven Wilson", 0, 0);
+
+        List<Track> ranked = scorer().rank(List.of(old, eightiesWilson), List.of(), List.of(), 10,
+                Double.NEGATIVE_INFINITY, eighties);
+        assertEquals(ids("21", "20"), Tracks.ids(ranked));
+
+        assertEquals(1, scorer().rank(List.of(undated), List.of(), List.of(), 10, 0.1, eighties).size());
+    }
+
+    @Test
+    void discoveredTracksMustFitTheMood() {
+        Mood.Style disco = new Mood.Style(List.of("disco"), List.of(), 0, 0);
+
+        List<Track> ranked = scorer().rank(List.of(katatonia, abba), List.of(), List.of(), 10, 0.25, disco);
+
+        assertEquals(ids("13"), Tracks.ids(ranked));
+    }
+
     private CandidateScorer scorer() {
         return new CandidateScorer(profiles, ScoringWeights.DEFAULTS.withJitter(0), new Random(0));
     }
