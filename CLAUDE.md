@@ -141,12 +141,12 @@ service → `http://localhost:9000`).
   plugin, changing player prefs).
 
 ## Roadmap
-- **Done:** Christmas filter; step 1 skeleton; step 2 Last.fm similarity + history scoring; Start DJ button +
+- **Done:** step 1 skeleton; step 2 Last.fm similarity + history scoring; Start DJ button +
   icon (`tools/Icon.java`); artist spreading/cap; song-version dedupe; following streamed
-  music; TIDAL discovery (~40%); per-player time-of-day starts; skip penalties.
-- **Next ideas:** Spotify as
-  a fallback catalogue (Spotty's JSON-RPC search behaves like an interactive menu with history:
-  needs investigation); a "why this track?" endpoint showing score parts.
+  music; TIDAL discovery (~40%); per-player time-of-day starts; skip penalties; Christmas filter.
+- **Next ideas:** Spotify as a fallback catalogue (Spotty's JSON-RPC search behaves like an
+  interactive menu with history: needs investigation); a "why this track?" endpoint showing
+  score parts.
 - **Step 3 (done):** Claude Haiku picks/orders with reasons; "Why this track?" in the DJ menu.
   Local Ollama was dropped: the server has 3 GB RAM and no GPU. An `OllamaLlm` for a LAN
   machine could still implement `LlmPort`. Reasons also show in track info and as a
