@@ -38,6 +38,11 @@ natural-language requests and explanations.
 - Async only: `Slim::Networking::SimpleAsyncHTTP->new($ok, $err, { timeout => N })`. Never block.
 - DSTM de-dupes returned URLs against the queue itself.
 - Prefs namespace `plugin.dj`: `service_url`, `timeout`.
+- Distribution: LMS repository file `repo.xml` (raw GitHub URL), zip on GitHub release
+  `plugin-v<version>`; `tools/release-plugin.sh` builds both (install.xml at the zip's top,
+  SHA-1 checked by LMS). Bump `install.xml` `<version>` per release. The service image is
+  `geireilertsen/dj` on Docker Hub (amd64 + arm64; `docker buildx --builder dj-builder ...
+  --push service`).
 
 ### Suggestion service (`/service`, Java 21, Maven, plain Java, no framework)
 Hexagonal: `dj.domain` has no framework dependencies (JDK only); adapters live in `dj.adapter.*`;

@@ -20,3 +20,4 @@ service/target/
 # Local data (SQLite), when run outside Docker
 /data/
 service/data/
+/dist/

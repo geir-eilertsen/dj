@@ -77,23 +77,17 @@ In the background DJ now looks up your artists on Last.fm (a few minutes for a t
 artists) and, if LMS's TIDAL plugin is signed in, finds new music by them and similar
 artists. `curl localhost:9010/status` shows how far it has come.
 
-**3. Install the LMS plugin.** Copy the `plugin` folder into LMS's plugin folder as `DJ`, then
-restart LMS:
+**3. Install the LMS plugin** from its repository:
 
-```sh
-git clone https://github.com/geir-eilertsen/dj.git
-# LMS in Docker (container "lms"):
-docker exec lms mkdir -p /config/cache/InstalledPlugins/Plugins/DJ
-docker cp dj/plugin/. lms:/config/cache/InstalledPlugins/Plugins/DJ/
-docker restart lms
-# LMS installed from the Debian/Ubuntu package:
-sudo cp -r dj/plugin /var/lib/squeezeboxserver/cache/InstalledPlugins/Plugins/DJ
-sudo chown -R squeezeboxserver: /var/lib/squeezeboxserver/cache/InstalledPlugins/Plugins/DJ
-sudo systemctl restart lyrionmusicserver
-```
+1. In LMS open *Settings → Manage Plugins* (Material Skin: *Settings → Server → Manage
+   Plugins*).
+2. At the bottom, under *Additional Repositories*, add
+   `https://raw.githubusercontent.com/geir-eilertsen/dj/main/repo.xml` and save.
+3. Find **DJ (AI suggestions)** in the list, tick it, save and restart LMS when asked.
 
-If the service runs on another machine, set its address under *Settings → Advanced → DJ*
-(and use `ports: ["9010:9010"]` instead of host networking).
+LMS offers new versions of the plugin there too. If the service runs on another machine, set
+its address under *Settings → Advanced → DJ* (and use `ports: ["9010:9010"]` instead of host
+networking).
 
 **4. Play.** In Material Skin open **Apps → DJ → Start DJ** (or **Play a mood…**). DJ replaces
 the queue, starts playing and becomes the player's Don't Stop The Music mixer, so it keeps
@@ -217,7 +211,14 @@ language, default English) and `DJ_LLM_TIMEOUT_MS` (default 5000) tune it.
 
 ## LMS plugin
 
-### Install
+### Release
+
+`tools/release-plugin.sh` publishes the plugin for the repository: bump `<version>` in
+`plugin/install.xml`, commit, then run the script. It zips `plugin/`, attaches the zip to a
+GitHub release `plugin-v<version>`, and commits and pushes `repo.xml` pointing at it with
+the zip's SHA-1. LMS checks the repository about once a day and offers the update.
+
+### Install by hand
 
 LMS runs in the `lms` container, which keeps its plugins in
 `/home/lms/config/cache/InstalledPlugins/Plugins` (mounted as `/config/...`). Copy the
