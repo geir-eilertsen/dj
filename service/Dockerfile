@@ -13,7 +13,8 @@ RUN mkdir /data
 FROM eclipse-temurin:21-jre
 LABEL org.opencontainers.image.title="dj" \
       org.opencontainers.image.description="AI 'what to play next' service for Lyrion Music Server" \
-      org.opencontainers.image.source="https://github.com/geir-eilertsen/dj"
+      org.opencontainers.image.source="https://github.com/geir-eilertsen/dj" \
+      org.opencontainers.image.licenses="MIT"
 WORKDIR /app
 COPY --from=build /build/target/dj-service.jar .
 # A new named volume mounted here starts with this ownership, so "nobody" (65534) can write the databases.

@@ -298,3 +298,7 @@ position), so it changes when you set new moods; pin **Play a mood…** instead.
 
 For more detail in the LMS log (`/home/lms/config/logs/server.log`), set
 *Settings → Advanced → Logging → plugin.dj* to *Info*.
+
+## License
+
+MIT, see [LICENSE](LICENSE).
