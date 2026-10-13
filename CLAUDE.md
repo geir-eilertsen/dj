@@ -60,11 +60,18 @@ Ports (`dj.domain.port`):
 - `DiscoveryStore`: discovered tracks (TrackId = URL) + artists played from streaming.
   Adapter `SqliteDiscoveryStore` (`discovery.db`, in memory).
 - `PlayHistory` / `FeedbackStore`: DJ's own listening log, suggestions and skips.
-  Adapter `SqlitePlayHistory` (`history.db`, schema v2).
+  Adapter `SqlitePlayHistory` (`history.db`, schema v3).
+- `MoodStore`: per-player moods (every set is a row; clear stamps `cleared_at`).
+  Adapter `SqliteMoodStore` (`mood.db`).
+- `MoodInterpreter`: request text → `Mood.Style(tags, artists, fromYear, toYear)`, choosing
+  tags from the 150 most common among artists' top 8 Last.fm tags. Adapter
+  `ClaudeMoodInterpreter` (same settings as `ClaudeLlm`); `NoMoodInterpreter` without a key.
+  Domain fallback `MoodKeywords` (known tags, library artists ≥4 chars, decades incl. "80-tallet").
 - `PlayerActivityPort`: what each player plays now, queue position, queue slices.
   Adapter `LmsPlayerActivity`.
 - `SimilarityPort`: acoustic neighbours. Stub (`NoSimilarity`); Bliss can't analyse streams.
-- `LlmPort`: picks and orders candidates, returning `Pick(id, reason)`. Adapter `ClaudeLlm`
+- `LlmPort`: picks and orders candidates given a `MixBrief` (context, fresh, mood), returning
+  `Pick(id, reason)`. Adapter `ClaudeLlm`
   (Anthropic Java SDK, `claude-haiku-5-5`, effort low, **thinking disabled** - measured: thinking
   on = 3.3-5.6 s, off = 2.1-2.8 s, same quality; JSON-schema output `{"picks":[{id,reason}]}`;
   no SDK retries; refusal/max_tokens/errors throw -> fallback; `warmUp()` lists models at start).
@@ -76,15 +83,19 @@ Name matching: `ArtistNames.key()` (case, accents, punctuation, "the", "&"),
 `SongTitles.key()` (strips remaster/live/mix/demo/version/EP/feat. tags, keeps "(Pt.1)").
 
 Core flow (`MixService`, settings in `MixSettings`):
-1. Context from LMS. Seeds: if the player is **stopped** (Start DJ from scratch),
+0. Mood: `MoodService.current` (set via `/mood`, lasts 4 h, Start DJ clears it).
+1. Context from LMS. A **fresh** start (`fresh=1`, or a stopped player) with a mood has no
+   seeds: the mood alone leads. Seeds: if fresh without a mood (Start DJ from scratch),
    `TimeOfDaySeeds` (5 songs this player played ±90 min of now, same weekday/weekend type,
    last 8 weeks, 14-day half-life); else request seeds (library or queue ids), else the last
-   5 queued tracks. Unknown seed artists are looked up on demand (`ArtistEnricher.ensure`,
+   5 queued tracks. Unknown seed and mood artists are looked up on demand (`ArtistEnricher.ensure`,
    max `DJ_SEED_LOOKUP_MS`); streamed artists trigger background `Discoverer.discoverAround`.
 2. `CandidateScorer` ranks the library and, separately, discovered tracks (relevance floor
    `DISCOVERY_MIN_RELEVANCE` 0.25): similar artist + tag cosine + play count + year + jitter;
    excludes queued songs and other versions of them, one version per song; recent artists
-   ×0.3; skip penalties (song ×0.4, artist ×0.85 per skip, 60-day half-life); artist
+   ×0.3 (not artists the mood names); mood: its artists and tags are 75% of the artist score
+   (`ScoringWeights.mood`; 100% with no seeds), seed-year closeness scaled down to match,
+   tracks outside the mood's years ×0.4; skip penalties (song ×0.4, artist ×0.85 per skip, 60-day half-life); artist
    spreading. Library and discovered lists are interleaved (`DJ_DISCOVERY_SHARE` 0.4 →
    L L D L D).
 3. LLM picks by ID only under a timeout; `TrackSelection` discards unknown IDs, dedupes, caps
@@ -98,9 +109,11 @@ then `Discoverer.discoverAll` (top 5 songs not in the library per library/listen
 top 3 for each one's 3 closest similar artists not in the library; skips namesakes whose
 online top 20 contains none of ≥2 library songs; aborts after 5 failures in a row).
 
-HTTP API (`dj.adapter.http`): `GET /mix?player=<mac>&seed=<id,id,..>&count=<n>` →
+HTTP API (`dj.adapter.http`): `GET /mix?player=<mac>&seed=<id,id,..>&count=<n>&fresh=1` →
 `{"source","tracks":[{"id","url","title","artist","album","reason"?}]}`;
-`GET /why?player=&url=` (404 if DJ gave no reason); `GET /health`; `GET /status`.
+`GET /why?player=&url=` (404 if DJ gave no reason); `GET /mood?player=` →
+`{"current","recent"}`; `POST /mood` (`player`, `text`; query or form) → the understood mood;
+`POST /mood/clear?player=`; `GET /health`; `GET /status`.
 
 Config via env vars: `LMS_URL` (`http://localhost:9000`), `DJ_PORT` (9010),
 `DJ_CANDIDATES` (50), `DJ_LLM_TIMEOUT_MS` (3000), `DJ_LIBRARY_TTL_MINUTES` (15),
@@ -136,9 +149,9 @@ service → `http://localhost:9000`).
   machine could still implement `LlmPort`. Reasons also show in track info and as a
   Material Skin pop-up on `newsong` (plugin caches them 30 days). Idea: let skips and
   reasons feed back into the prompt.
-- **Step 4: natural-language requests** ("mellow prog for Sunday morning"): an endpoint
-  plus an LMS menu item to set a per-player "mood" that biases candidates and the LLM.
-  Last.fm tags give the vocabulary.
+- **Step 4 (done):** moods. DJ menu: "Play a mood…" (OPML `search` item, `cachesearch 0`),
+  recent moods (passthrough text), "Clear mood". Setting one starts a fresh mix of 10.
+  Ideas: discover around mood artists not in the library; per-mood skip learning.
 - Local audio + bliss-analyser would make `SimilarityPort` real.
 
 ## Gotchas
@@ -155,5 +168,7 @@ service → `http://localhost:9000`).
   "My Apps" (classic UI). Home screen items are per device.
 - `!` commands in Claude Code can't prompt for a sudo password; long commands pasted into a
   terminal can wrap and break. Prefer short commands or scripts.
+- The DJ menu is rebuilt by LMS for every step and items are found by position: keep fixed
+  items first, mood-dependent ones after. Pinned recent moods follow the position, not the text.
 - When LMS's own random mix is active on a player (`randomplay: 1` in `status`), DSTM does
   not call any mixer. Clear the queue to return to DJ.

@@ -82,7 +82,17 @@ curl 'localhost:9010/mix?player=b0:3c:dc:72:f2:72&seed=119,131&count=3'
 ```
 
 `source` is `llm` when the LLM chose the order and `fallback` otherwise. Without `seed`,
-the end of the player's queue is used.
+the end of the player's queue is used. `fresh=1` asks for tracks that start a new queue
+rather than follow the current one (led by the player's mood, if it has one).
+
+Moods (requests in the listener's own words):
+
+- `POST /mood` with `player` and `text` (query or form body) sets the player's mood and
+  returns how DJ understood it: `{"text","tags","artists","fromYear","toYear","setAt","expiresAt"}`.
+- `GET /mood?player=<id>` returns `{"current": <mood or null>, "recent": ["text", ...]}`.
+- `POST /mood/clear?player=<id>` ends the mood.
+
+`GET /why?player=<id>&url=<track url>` returns `{"reason"}` for a track DJ suggested, else 404.
 
 `GET /status` shows the number of artist profiles and discovered tracks, whether Last.fm is
 configured, and the last enrichment and discovery results. Errors return
@@ -179,6 +189,23 @@ it is the first line of the song's track info ("Why DJ chose this").
 
 To get a home screen button in Material Skin, long-press **Start DJ** (or use its ⋮ menu)
 and choose *Pin to home screen*.
+
+### Moods
+
+**Apps → DJ → Play a mood…** takes a request in your own words, in any language:
+"mellow prog for Sunday morning", "Kim Larsen og dansk rock fra 80-tallet". DJ replaces the
+queue with 10 songs for it and keeps following it in everything it adds, until you choose
+**Clear mood**, use **Start DJ**, or 4 hours pass. Your last 5 moods for the player are listed
+under the fixed items for one tap.
+
+Claude turns the words into style tags (from the Last.fm tags your artists have), artists and
+years, once, when you set the mood. The mood then counts for 75% of how well each song fits
+(the rest follows what's playing), songs outside the requested years score lower, and Claude
+is told the request when it picks. Without Claude, DJ spots known tags, artist names and
+decades ("80s", "1970s", "80-tallet") in the words.
+
+Pinning a recent mood to the home screen pins its *position* in the list (LMS menus work by
+position), so it changes when you set new moods; pin **Play a mood…** instead.
 
 ### Verify that the music keeps playing
 
