@@ -160,7 +160,7 @@ public class MixHttpServer {
         }
         ConcertFinder finder = concerts;
         if (finder == null) {
-            respond(exchange, 404, Map.of("error", "concerts are not set up (no TICKETMASTER_API_KEY)"));
+            respond(exchange, 404, Map.of("error", "concerts are not set up (no TICKETMASTER_API_KEY and DJ_MADNESS_LIVE off)"));
             return;
         }
         String artist = first(queryParams(exchange.getRequestURI().getRawQuery()), "artist");

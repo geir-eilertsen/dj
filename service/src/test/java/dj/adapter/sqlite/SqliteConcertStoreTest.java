@@ -40,4 +40,15 @@ class SqliteConcertStoreTest {
         assertEquals(Optional.of(new ArtistConcerts("Gasolin'", List.of(), AT)), reopened.get("gasolin"));
         assertEquals(2, reopened.all().size());
     }
+
+    @Test
+    void forgetsLookupsFromBeforeMadnessLive() throws Exception {
+        Path db = dir.resolve("concerts.db");
+        new SqliteConcertStore(db).save(new ArtistConcerts("Enslaved", List.of(), AT));
+        try (java.sql.Connection c = java.sql.DriverManager.getConnection("jdbc:sqlite:" + db);
+             java.sql.Statement st = c.createStatement()) {
+            st.executeUpdate("PRAGMA user_version = 1");
+        }
+        assertEquals(Optional.empty(), new SqliteConcertStore(db).get("Enslaved"));
+    }
 }

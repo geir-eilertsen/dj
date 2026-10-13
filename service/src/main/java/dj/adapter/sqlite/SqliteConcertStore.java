@@ -27,7 +27,8 @@ import java.util.concurrent.ConcurrentHashMap;
 /** Concert lookups in a local SQLite database, mirrored in memory. */
 public class SqliteConcertStore implements ConcertStore {
 
-    private static final int SCHEMA_VERSION = 1;
+    /** 2: lookups made before Madness Live was a source are dropped, so the next scan asks again. */
+    private static final int SCHEMA_VERSION = 2;
 
     private final String url;
     private final Map<String, ArtistConcerts> byArtist = new ConcurrentHashMap<>();
@@ -137,6 +138,10 @@ public class SqliteConcertStore implements ConcertStore {
                         url        TEXT NOT NULL,
                         PRIMARY KEY (artist_key, position)
                     )""");
+            if (version == 1) {
+                st.executeUpdate("DELETE FROM concert");
+                st.executeUpdate("DELETE FROM concert_artist");
+            }
             st.executeUpdate("PRAGMA user_version = " + SCHEMA_VERSION);
         }
     }
