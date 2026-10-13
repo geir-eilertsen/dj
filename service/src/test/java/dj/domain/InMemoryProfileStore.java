@@ -6,6 +6,7 @@ import dj.domain.port.ArtistProfileStore;
 
 import java.time.Instant;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -31,6 +32,11 @@ final class InMemoryProfileStore implements ArtistProfileStore {
     @Override
     public int size() {
         return profiles.size();
+    }
+
+    @Override
+    public Collection<ArtistProfile> all() {
+        return List.copyOf(profiles.values());
     }
 
     /** Adds a profile with the given tags (weight 1) and similar artists ("name:match"). */

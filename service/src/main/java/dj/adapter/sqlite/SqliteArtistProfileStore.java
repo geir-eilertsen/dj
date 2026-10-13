@@ -14,6 +14,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -57,6 +58,11 @@ public class SqliteArtistProfileStore implements ArtistProfileStore {
     @Override
     public int size() {
         return cache.size();
+    }
+
+    @Override
+    public Collection<ArtistProfile> all() {
+        return List.copyOf(cache.values());
     }
 
     @Override

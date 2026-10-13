@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -42,6 +43,11 @@ class ClaudeLlmTest {
         @Override
         public int size() {
             return byKey.size();
+        }
+
+        @Override
+        public Collection<ArtistProfile> all() {
+            return byKey.values();
         }
     };
 
