@@ -30,6 +30,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.function.Predicate;
 
 /**
  * Decides what a player should play next.
@@ -46,8 +47,9 @@ import java.util.concurrent.TimeoutException;
  * <p>Candidates are always generated locally: acoustic neighbours first (when a similarity
  * source exists), then library tracks and discovered tracks ranked by {@link CandidateScorer}
  * and interleaved so about {@link MixSettings#discoveryShare()} of the mix is discovered music,
- * when relevant discovered music exists. The LLM only picks and orders among the candidates,
- * under a hard timeout; if it is slow, fails or answers with nothing usable, candidate order is
+ * when relevant discovered music exists. Christmas songs are left out outside the season unless
+ * the listener asks for them ({@link ChristmasSongs}). The LLM only picks and orders among the
+ * candidates, under a hard timeout; if it is slow, fails or answers with nothing usable, candidate order is
  * used instead. Only a failing library prevents a mix.
  */
 public final class MixService {
@@ -169,17 +171,23 @@ public final class MixService {
         lookUpArtists(artists);
         discoverAroundStreamedArtists(queue, byId);
 
+        boolean christmas = ChristmasSongs.wanted(context.localTime().toLocalDate(), mood,
+                brief.mood().map(Mood::text).orElse(""), seeds);
+        Predicate<Track> allowed = t -> christmas || !ChristmasSongs.isChristmasSong(t);
+
         Map<TrackId, Track> pool = new LinkedHashMap<>();
         for (Track track : neighbours(request.seeds(), poolSize)) {
             if (pool.size() < poolSize && !request.seeds().contains(track.id())
-                    && !queued.containsKey(track.id())) {
+                    && !queued.containsKey(track.id()) && allowed.test(track)) {
                 pool.putIfAbsent(track.id(), track);
             }
         }
 
-        List<Track> fromLibrary = scorer.rank(all, seeds, queue, poolSize, Double.NEGATIVE_INFINITY, mood);
+        List<Track> fromLibrary = scorer.rank(all.stream().filter(allowed).toList(), seeds, queue, poolSize,
+                Double.NEGATIVE_INFINITY, mood);
         List<Track> fromDiscovery = settings.discoveryShare() > 0
-                ? scorer.rank(discovered.allTracks(), seeds, queue, poolSize, MixSettings.DISCOVERY_MIN_RELEVANCE, mood)
+                ? scorer.rank(discovered.allTracks().stream().filter(allowed).toList(), seeds, queue, poolSize,
+                        MixSettings.DISCOVERY_MIN_RELEVANCE, mood)
                 : List.of();
         for (Track track : interleave(fromLibrary, fromDiscovery, settings.discoveryShare())) {
             if (pool.size() == poolSize) {

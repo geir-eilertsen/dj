@@ -441,6 +441,19 @@ class MixServiceTest {
     }
 
     @Test
+    void leavesChristmasSongsOutOfSeasonUnlessAskedFor() {
+        Track julesang = new Track(TrackId.of("9"), "tidal://9.flc", "Gnags' Julesang", "Gnags", "", 1983, 99);
+        libraryTracks = List.of(julesang, Tracks.track("1"), Tracks.track("2"));
+        discovered.save("Gnags", List.of(new Track(TrackId.of("tidal://10.flc"), "tidal://10.flc", "Last Christmas",
+                "Wham!", "", 1984, 0)), Instant.now());
+
+        assertEquals(ids("1", "2"), ids(mix(List.of(), 5).tracks()));
+
+        moods.save(PLAYER, new Mood("julemusikk", Mood.Style.NONE, Instant.now()));
+        assertTrue(ids(mix(List.of(), 5).tracks()).contains(TrackId.of("9")));
+    }
+
+    @Test
     void aFailingMoodStoreDoesNotStopTheMusic() {
         moods = new InMemoryMoodStore() {
             @Override

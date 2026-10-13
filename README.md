@@ -204,6 +204,11 @@ years, once, when you set the mood. The mood then counts for 75% of how well eac
 is told the request when it picks. Without Claude, DJ spots known tags, artist names and
 decades ("80s", "1970s", "80-tallet") in the words.
 
+Christmas songs (by title or album, in English and the Nordic languages, German and Spanish)
+are only suggested from the first Sunday of Advent to 6 January, unless the mood asks for them
+("julemusikk") or one is playing at the end of the queue. Discovery still finds them, so
+they're ready in December.
+
 Pinning a recent mood to the home screen pins its *position* in the list (LMS menus work by
 position), so it changes when you set new moods; pin **Play a mood…** instead.
 

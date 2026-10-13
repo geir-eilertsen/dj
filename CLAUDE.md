@@ -95,7 +95,10 @@ Core flow (`MixService`, settings in `MixSettings`):
    excludes queued songs and other versions of them, one version per song; recent artists
    ×0.3 (not artists the mood names); mood: its artists and tags are 75% of the artist score
    (`ScoringWeights.mood`; 100% with no seeds), seed-year closeness scaled down to match,
-   tracks outside the mood's years ×0.4; skip penalties (song ×0.4, artist ×0.85 per skip, 60-day half-life); artist
+   tracks outside the mood's years ×0.4; Christmas songs (`ChristmasSongs`: title/album words in
+   EN/NO/DA/SV/DE/ES, "jul…" spelled out to spare July/Julie/Julia/Jules) are dropped unless in
+   season (first Sunday of Advent to 6 Jan, player's local date), the mood asks for them, or a
+   seed is one; skip penalties (song ×0.4, artist ×0.85 per skip, 60-day half-life); artist
    spreading. Library and discovered lists are interleaved (`DJ_DISCOVERY_SHARE` 0.4 →
    L L D L D).
 3. LLM picks by ID only under a timeout; `TrackSelection` discards unknown IDs, dedupes, caps
@@ -138,10 +141,10 @@ service → `http://localhost:9000`).
   plugin, changing player prefs).
 
 ## Roadmap
-- **Done:** step 1 skeleton; step 2 Last.fm similarity + history scoring; Start DJ button +
+- **Done:** Christmas filter; step 1 skeleton; step 2 Last.fm similarity + history scoring; Start DJ button +
   icon (`tools/Icon.java`); artist spreading/cap; song-version dedupe; following streamed
   music; TIDAL discovery (~40%); per-player time-of-day starts; skip penalties.
-- **Next ideas:** Christmas filter (discovery found "Gnags' Julesang" in October); Spotify as
+- **Next ideas:** Spotify as
   a fallback catalogue (Spotty's JSON-RPC search behaves like an interactive menu with history:
   needs investigation); a "why this track?" endpoint showing score parts.
 - **Step 3 (done):** Claude Haiku picks/orders with reasons; "Why this track?" in the DJ menu.
