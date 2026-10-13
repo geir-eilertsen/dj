@@ -413,8 +413,25 @@ class MixServiceTest {
         useDanishProfiles();
         queue = queued("2");
         setMood(new Mood.Style(List.of("danish"), List.of(), 0, 0));
+        feedback.recordSuggested(PLAYER, queue, java.util.Map.of(), Instant.now());
 
         assertEquals(ids("1"), ids(mix(ids("2"), 1).tracks()));
+    }
+
+    @Test
+    void aMoodEndsWhenTheListenerPlaysOtherMusic() {
+        useDanishLibrary();
+        useDanishProfiles();
+        libraryTracks = new ArrayList<>(libraryTracks);
+        libraryTracks.add(Tracks.track("4", "Katatonia", 2006, 0));
+        libraryTracks.add(Tracks.track("5", "Gasolin'", 1976, 0));
+        queue = queued("1", "2", "3");
+        setMood(new Mood.Style(List.of("danish"), List.of(), 0, 0));
+        feedback.recordSuggested(PLAYER, queued("1"), java.util.Map.of(), Instant.now());
+
+        // Opeth and TOOL were the listener's own choice: follow them, not the mood.
+        assertEquals(ids("4"), ids(mix(List.of(), 1).tracks()));
+        assertTrue(moods.latest(PLAYER).isEmpty());
     }
 
     @Test

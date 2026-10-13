@@ -88,7 +88,8 @@ Name matching: `ArtistNames.key()` (case, accents, punctuation, "the", "&"),
 `SongTitles.key()` (strips remaster/live/mix/demo/version/EP/feat. tags, keeps "(Pt.1)").
 
 Core flow (`MixService`, settings in `MixSettings`):
-0. Mood: `MoodService.current` (set via `/mood`, lasts 4 h, Start DJ clears it).
+0. Mood: `MoodService.current` (set via `/mood`, lasts 4 h, Start DJ clears it; a non-fresh
+   mix ends it when most of the last 5 queued tracks weren't DJ suggestions since it was set).
 1. Context from LMS. A **fresh** start (`fresh=1`, or a stopped player) with a mood has no
    seeds: the mood alone leads. Seeds: if fresh without a mood (Start DJ from scratch),
    `TimeOfDaySeeds` (5 songs this player played ±90 min of now, same weekday/weekend type,

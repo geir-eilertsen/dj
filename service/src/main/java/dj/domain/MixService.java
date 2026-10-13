@@ -39,7 +39,9 @@ import java.util.function.Predicate;
  * ({@link MoodService}) the mood alone leads, otherwise songs the player played around this time
  * of day ({@link TimeOfDaySeeds}) are the seeds. Otherwise seeds are the request's tracks or else
  * the end of the player's queue, whether or not they are in the library: music played straight
- * from a streaming service still has an artist. A mood also steers mixes that follow the queue.
+ * from a streaming service still has an artist. A mood also steers mixes that follow the queue,
+ * until most of the end of the queue is music the listener chose instead of DJ's suggestions:
+ * then the mood ends.
  * Seed and mood artists without a profile are looked up on demand, waiting at most
  * {@link MixSettings#seedLookupTimeout()}; a slow lookup finishes in the background for later
  * mixes. Artists played from a streaming service also trigger background discovery.
@@ -102,7 +104,13 @@ public final class MixService {
 
     public Mix mix(MixRequest request) {
         PlaybackContext context = playbackContext.contextFor(request.playerId());
-        MixBrief brief = new MixBrief(context, request.fresh() || !context.playing(), currentMood(request.playerId()));
+        boolean fresh = request.fresh() || !context.playing();
+        Optional<Mood> mood = currentMood(request.playerId());
+        if (!fresh && mood.isPresent() && listenerTookOver(request.playerId(), context.queue(), mood.get())) {
+            endMood(request.playerId(), mood.get());
+            mood = Optional.empty();
+        }
+        MixBrief brief = new MixBrief(context, fresh, mood);
         List<Track> candidates = candidates(request, brief);
         List<Pick> picks = askLlm(brief, candidates, request.count());
         List<TrackId> chosen = picks.stream().map(Pick::id).toList();
@@ -138,6 +146,30 @@ public final class MixService {
         } catch (RuntimeException e) {
             LOG.log(Level.WARNING, "Could not read the mood of " + playerId + "; mixing without it", e);
             return Optional.empty();
+        }
+    }
+
+    /**
+     * Whether most of the end of the queue is music the listener chose rather than DJ's
+     * suggestions since the mood was set: they've moved on, and the mood would only fight them.
+     */
+    private boolean listenerTookOver(String playerId, List<Track> queue, Mood mood) {
+        List<Track> recent = queue.subList(Math.max(0, queue.size() - SEEDS_FROM_QUEUE), queue.size());
+        try {
+            long chosen = recent.stream().filter(t -> !feedback.wasSuggested(playerId, t.url(), mood.setAt())).count();
+            return chosen * 2 > recent.size();
+        } catch (RuntimeException e) {
+            LOG.log(Level.WARNING, "Could not read suggestions for " + playerId + "; keeping the mood", e);
+            return false;
+        }
+    }
+
+    private void endMood(String playerId, Mood mood) {
+        LOG.log(Level.INFO, "Ending mood \"{0}\" for {1}: the listener chose other music", mood.text(), playerId);
+        try {
+            moods.clear(playerId);
+        } catch (RuntimeException e) {
+            LOG.log(Level.WARNING, "Could not clear the mood of " + playerId, e);
         }
     }
 
