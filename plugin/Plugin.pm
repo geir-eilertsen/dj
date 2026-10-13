@@ -4,7 +4,9 @@ package Plugins::DJ::Plugin;
 #
 # - As a Don't Stop The Music mixer it tops up a queue that is about to run out.
 # - As an app (My Apps; pinnable to the home screen) it offers "Start DJ", which replaces the
-#   queue with a fresh mix and hands over to DSTM to keep it going.
+#   queue with a fresh mix and hands over to DSTM to keep it going, and "Play a mood...", which
+#   does the same for a request in the listener's own words ("mellow prog for Sunday morning").
+#   The mood keeps steering DJ's suggestions until it's cleared, Start DJ is used, or 4 hours pass.
 #
 # The service does all the thinking; this plugin only collects seed tracks, makes one
 # non-blocking HTTP request and hands the returned URLs to LMS.
@@ -98,21 +100,54 @@ sub postinitPlugin {
 
 sub getDisplayName { 'PLUGIN_DJ' }
 
-# The app's menu.
+# The app's menu. LMS rebuilds it for every step into it and finds the chosen item by position,
+# so the fixed items come first and the ones that depend on the player's moods after them.
 sub handleFeed {
 	my ($client, $cb) = @_;
 
-	$cb->({
-		items => [{
-			name       => cstring($client, 'PLUGIN_DJ_START'),
-			type       => 'link',
-			url        => \&startDj,
-			nextWindow => 'nowPlaying',
-		},{
-			name => cstring($client, 'PLUGIN_DJ_WHY'),
-			type => 'link',
-			url  => \&whyThisTrack,
-		}],
+	my @items = ({
+		name       => cstring($client, 'PLUGIN_DJ_START'),
+		type       => 'link',
+		url        => \&startDj,
+		nextWindow => 'nowPlaying',
+	},{
+		name        => cstring($client, 'PLUGIN_DJ_MOOD'),
+		type        => 'search',
+		url         => \&playMood,
+		cachesearch => 0,
+		nextWindow  => 'nowPlaying',
+	},{
+		name => cstring($client, 'PLUGIN_DJ_WHY'),
+		type => 'link',
+		url  => \&whyThisTrack,
+	});
+
+	my $player = $client ? $client->master->id : '';
+	_callService('GET', '/mood', { player => $player }, sub {
+		my $moods = shift;
+
+		if (my $current = $moods->{current}) {
+			push @items, {
+				name => cstring($client, 'PLUGIN_DJ_MOOD_CLEAR', $current->{text}),
+				type => 'link',
+				url  => \&clearMood,
+			};
+		}
+
+		for my $text (@{ $moods->{recent} || [] }) {
+			push @items, {
+				name        => $text,
+				type        => 'link',
+				url         => \&playMood,
+				passthrough => [{ text => $text }],
+				nextWindow  => 'nowPlaying',
+			};
+		}
+
+		$cb->({ items => \@items });
+	}, sub {
+		# The service is down: the fixed items still work as well as they can
+		$cb->({ items => \@items });
 	});
 }
 
@@ -204,8 +239,8 @@ sub whyThisTrack {
 	)->get(sprintf('%s/why?player=%s&url=%s', $base, uri_escape_utf8($client->id), uri_escape_utf8($url)));
 }
 
-# "Start DJ": replace the queue with a fresh mix following the current track, play it,
-# and make DJ this player's DSTM mixer so the music keeps going.
+# "Start DJ": end any mood, replace the queue with a fresh mix following the current track,
+# play it, and make DJ this player's DSTM mixer so the music keeps going.
 sub startDj {
 	my ($client, $cb) = @_;
 
@@ -213,32 +248,86 @@ sub startDj {
 
 	my @seeds = grep { defined } _trackId(Slim::Player::Playlist::song($client));
 
-	_requestMix($client, \@seeds, NUM_START_TRACKS, sub {
-		my $tracks = shift;
-
-		if (!@$tracks) {
-			$cb->({ items => [{ name => cstring($client, 'PLUGIN_DJ_START_FAILED'), type => 'text' }] });
-			return;
-		}
-
-		# LMS's own random mix would keep DSTM from calling us; a no-op if it isn't active
-		if ( Slim::Utils::PluginManager->isEnabled('Slim::Plugin::RandomPlay::Plugin') ) {
-			$client->execute(['randomplay', 'disable']);
-		}
-
-		$client->execute(['playlist', 'playtracks', 'listRef', $tracks]);
-
-		if ( _dstmEnabled() ) {
-			preferences('plugin.dontstopthemusic')->client($client)->set('provider', DSTM_HANDLER);
-		}
-
-		$cb->({
-			items => [{
-				name        => cstring($client, 'PLUGIN_DJ_STARTED'),
-				type        => 'text',
-				showBriefly => 1,
-			}],
+	my $start = sub {
+		_requestMix($client, \@seeds, NUM_START_TRACKS, sub {
+			_playMix($client, $cb, shift, cstring($client, 'PLUGIN_DJ_STARTED'));
 		});
+	};
+
+	# Whether or not clearing works, start: a mood left behind still makes a good mix
+	_callService('POST', '/mood/clear', { player => $client->id }, $start, $start);
+}
+
+# "Play a mood...": the listener's request, typed or picked from the recent ones. Sets it as the
+# player's mood, then starts a fresh mix for it like Start DJ.
+sub playMood {
+	my ($client, $cb, $args, $pass) = @_;
+
+	$client = $client->master;
+
+	my $text = $pass && $pass->{text};
+	$text = $args->{search} if !defined $text && $args;
+	$text = '' unless defined $text;
+	$text =~ s/^\s+|\s+$//g;
+
+	my $fail = sub {
+		$cb->({ items => [{ name => cstring($client, 'PLUGIN_DJ_MOOD_FAILED'), type => 'text' }] });
+	};
+
+	if ($text eq '') {
+		$fail->();
+		return;
+	}
+
+	_callService('POST', '/mood', { player => $client->id, text => $text }, sub {
+		my $mood = shift;
+		_requestMix($client, [], NUM_START_TRACKS, sub {
+			_playMix($client, $cb, shift, cstring($client, 'PLUGIN_DJ_STARTED_MOOD', $mood->{text} || $text));
+		}, 1);
+	}, $fail);
+}
+
+sub clearMood {
+	my ($client, $cb) = @_;
+
+	$client = $client->master;
+
+	my $reply = sub {
+		my ($token) = @_;
+		$cb->({ items => [{ name => cstring($client, $token), type => 'text', showBriefly => 1 }] });
+	};
+
+	_callService('POST', '/mood/clear', { player => $client->id },
+		sub { $reply->('PLUGIN_DJ_MOOD_CLEARED') },
+		sub { $reply->('PLUGIN_DJ_START_FAILED') });
+}
+
+# Replaces the queue with $tracks, plays them and makes DJ the player's DSTM mixer.
+sub _playMix {
+	my ($client, $cb, $tracks, $startedText) = @_;
+
+	if (!@$tracks) {
+		$cb->({ items => [{ name => cstring($client, 'PLUGIN_DJ_START_FAILED'), type => 'text' }] });
+		return;
+	}
+
+	# LMS's own random mix would keep DSTM from calling us; a no-op if it isn't active
+	if ( Slim::Utils::PluginManager->isEnabled('Slim::Plugin::RandomPlay::Plugin') ) {
+		$client->execute(['randomplay', 'disable']);
+	}
+
+	$client->execute(['playlist', 'playtracks', 'listRef', $tracks]);
+
+	if ( _dstmEnabled() ) {
+		preferences('plugin.dontstopthemusic')->client($client)->set('provider', DSTM_HANDLER);
+	}
+
+	$cb->({
+		items => [{
+			name        => $startedText,
+			type        => 'text',
+			showBriefly => 1,
+		}],
 	});
 }
 
@@ -256,16 +345,16 @@ sub dontStopTheMusic {
 	});
 }
 
-# Asks the service for $count tracks following @$seeds. $onDone is called exactly once with
-# an arrayref of URLs, which is empty if anything went wrong.
+# Asks the service for $count tracks following @$seeds, or starting a new queue if $fresh.
+# $onDone is called exactly once with an arrayref of URLs, which is empty if anything went wrong.
 sub _requestMix {
-	my ($client, $seeds, $count, $onDone) = @_;
+	my ($client, $seeds, $count, $onDone, $fresh) = @_;
 
 	my $url = eval {
 		my $base = $prefs->get('service_url');
 		$base =~ s{/+$}{};
-		sprintf('%s/mix?player=%s&count=%d&seed=%s',
-			$base, uri_escape_utf8($client->id), $count, join(',', @$seeds));
+		sprintf('%s/mix?player=%s&count=%d&seed=%s%s',
+			$base, uri_escape_utf8($client->id), $count, join(',', @$seeds), $fresh ? '&fresh=1' : '');
 	};
 	if ($@ || !$url) {
 		$log->error("Could not build mix request: $@");
@@ -304,6 +393,43 @@ sub _requestMix {
 			timeout => $prefs->get('timeout'),
 		},
 	)->get($url);
+}
+
+# Calls the service: GET with %$params in the query, POST with them as a form. Exactly one of
+# $onOk (with the decoded JSON response) or $onError is called.
+sub _callService {
+	my ($method, $path, $params, $onOk, $onError) = @_;
+
+	my $base = $prefs->get('service_url');
+	$base =~ s{/+$}{};
+	my $query = join('&', map { $_ . '=' . uri_escape_utf8($params->{$_}) } sort keys %$params);
+
+	my $http = Slim::Networking::SimpleAsyncHTTP->new(
+		sub {
+			my $response = eval { from_json(shift->content) };
+			if ($@ || ref $response ne 'HASH') {
+				$log->error("Invalid response from dj service for $path: $@");
+				$onError->();
+				return;
+			}
+			$onOk->($response);
+		},
+		sub {
+			my ($http, $error) = @_;
+			$log->warn("dj service request $method $path failed: $error");
+			$onError->();
+		},
+		{
+			timeout => $prefs->get('timeout'),
+		},
+	);
+
+	if ($method eq 'POST') {
+		$http->post($base . $path, 'Content-Type' => 'application/x-www-form-urlencoded', $query);
+	}
+	else {
+		$http->get($base . $path . '?' . $query);
+	}
 }
 
 # Ids of the last few tracks in the queue.

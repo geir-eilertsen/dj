@@ -37,6 +37,26 @@ PLUGIN_DJ_START_FAILED
 	EN	Could not get suggestions from the DJ service
 	NO	Fikk ikke forslag fra DJ-tjenesten
 
+PLUGIN_DJ_STARTED_MOOD
+	EN	DJ is playing: %s
+	NO	DJ spiller: %s
+
+PLUGIN_DJ_MOOD
+	EN	Play a mood…
+	NO	Spill en stemning…
+
+PLUGIN_DJ_MOOD_CLEAR
+	EN	Clear mood: %s
+	NO	Fjern stemning: %s
+
+PLUGIN_DJ_MOOD_CLEARED
+	EN	Mood cleared
+	NO	Stemningen er fjernet
+
+PLUGIN_DJ_MOOD_FAILED
+	EN	Could not set the mood
+	NO	Kunne ikke sette stemningen
+
 PLUGIN_DJ_WHY
 	EN	Why this track?
 	NO	Hvorfor denne låten?
