@@ -7,7 +7,7 @@ package Plugins::DJ::Plugin;
 #   queue with a fresh mix and hands over to DSTM to keep it going, and "Play a mood...", which
 #   does the same for a request in the listener's own words ("mellow prog for Sunday morning").
 #   The mood keeps steering DJ's suggestions until it's cleared, Start DJ is used, or 4 hours pass.
-# - It shows upcoming concerts in Europe by the artist that's playing (track info, and a pop-up in
+# - It shows upcoming concerts in Europe (Ticketmaster, Madness Live!) by the artist that's playing (track info, and a pop-up in
 #   Material Skin), and lists every concert by the artists the listener plays ("Upcoming concerts").
 #
 # The service does all the thinking; this plugin only collects seed tracks, makes one
@@ -579,7 +579,8 @@ sub _concertSummary {
 	return $text;
 }
 
-# "14.11.2026 20:00 · Sentrum Scene, Oslo (NO)"
+# "14.11.2026 20:00 · Sentrum Scene, Oslo (NO)", plus the bill when it's a line-up
+# ("· Enslaved + Sólstafir"), which shows when the artist is the support act
 sub _concertLine {
 	my ($client, $concert) = @_;
 
@@ -588,7 +589,10 @@ sub _concertLine {
 	my $where = join(', ', grep { $_ } $concert->{venue}, $concert->{city});
 	$where .= " ($concert->{country})" if $concert->{country};
 
-	return "$when \x{00B7} $where";
+	my $line = "$when \x{00B7} $where";
+	$line .= " \x{00B7} $concert->{title}" if ($concert->{title} || '') =~ / \+ /;
+
+	return $line;
 }
 
 # The venue's local date (YYYY-MM-DD) in the server's short date format

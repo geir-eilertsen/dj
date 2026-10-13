@@ -90,8 +90,8 @@ PLUGIN_DJ_CONCERTS_NONE
 	NO	Ingen kommende konserter funnet ennå. DJ sjekker artistene du spiller én gang i døgnet.
 
 PLUGIN_DJ_CONCERTS_FAILED
-	EN	Could not get concerts from the DJ service. Is TICKETMASTER_API_KEY set?
-	NO	Fikk ikke konserter fra DJ-tjenesten. Er TICKETMASTER_API_KEY satt?
+	EN	Could not get concerts from the DJ service.
+	NO	Fikk ikke konserter fra DJ-tjenesten.
 
 PLUGIN_DJ_CONCERTS_POPUP
 	EN	On tour:
