@@ -2,7 +2,9 @@ package dj.domain;
 
 import dj.domain.model.ArtistProfile;
 import dj.domain.model.Mix;
+import dj.domain.model.MixBrief;
 import dj.domain.model.MixRequest;
+import dj.domain.model.Mood;
 import dj.domain.model.PlaybackContext;
 import dj.domain.model.Track;
 import dj.domain.model.TrackId;
@@ -54,6 +56,8 @@ class MixServiceTest {
     private SimilarityPort similarity = (seeds, limit) -> List.of();
     private LlmPort llm = (context, candidates, count) -> List.of();
     private final AtomicReference<PlaybackContext> seenContext = new AtomicReference<>();
+    private dj.domain.port.MoodStore moods = new InMemoryMoodStore();
+    private boolean fresh = false;
 
     @AfterEach
     void shutDown() {
@@ -209,8 +213,8 @@ class MixServiceTest {
     @Test
     void passesThePlaybackContextToTheLlm() {
         AtomicReference<PlaybackContext> givenToLlm = new AtomicReference<>();
-        llm = (context, candidates, count) -> {
-            givenToLlm.set(context);
+        llm = (brief, candidates, count) -> {
+            givenToLlm.set(brief.context());
             return List.of();
         };
 
@@ -403,6 +407,62 @@ class MixServiceTest {
         assertEquals(java.util.Map.of(mix.tracks().getFirst().url(), "Seventh heaven"), feedback.reasons);
     }
 
+    @Test
+    void aMoodSteersMixesThatFollowTheQueue() {
+        useDanishLibrary();
+        useDanishProfiles();
+        queue = queued("2");
+        setMood(new Mood.Style(List.of("danish"), List.of(), 0, 0));
+
+        assertEquals(ids("1"), ids(mix(ids("2"), 1).tracks()));
+    }
+
+    @Test
+    void aFreshStartWithAMoodIgnoresTheQueueAndTellsTheLlm() {
+        useDanishLibrary();
+        useDanishProfiles();
+        libraryTracks = new ArrayList<>(libraryTracks);
+        libraryTracks.add(Tracks.track("4", "Katatonia", 2006, 0));
+        queue = queued("2");
+        setMood(new Mood.Style(List.of("progressive metal"), List.of(), 0, 0));
+        fresh = true;
+        AtomicReference<MixBrief> seen = new AtomicReference<>();
+        llm = (brief, candidates, count) -> {
+            seen.set(brief);
+            return List.of();
+        };
+
+        Mix mix = mix(ids("2"), 2);
+
+        // Without the queue as seeds TOOL and Katatonia fit equally, on tags alone; TOOL is played more.
+        assertEquals(ids("3", "4"), ids(mix.tracks()));
+        assertTrue(seen.get().fresh());
+        assertEquals("test mood", seen.get().mood().orElseThrow().text());
+    }
+
+    @Test
+    void aFailingMoodStoreDoesNotStopTheMusic() {
+        moods = new InMemoryMoodStore() {
+            @Override
+            public Optional<Mood> latest(String playerId) {
+                throw new IllegalStateException("disk full");
+            }
+        };
+
+        assertEquals(3, mix(List.of(), 3).tracks().size());
+    }
+
+    private void setMood(Mood.Style style) {
+        moods.save(PLAYER, new Mood("test mood", style, Instant.now()));
+    }
+
+    private void useDanishProfiles() {
+        profiles.with("Gasolin'", List.of("danish", "rock"))
+                .with("Opeth", List.of("progressive metal"), "Katatonia:0.9")
+                .with("TOOL", List.of("progressive metal"))
+                .with("Katatonia", List.of("progressive metal"));
+    }
+
     private static List<dj.domain.model.Pick> picks(String... ids) {
         return java.util.Arrays.stream(ids).map(id -> new dj.domain.model.Pick(TrackId.of(id), "because")).toList();
     }
@@ -434,9 +494,12 @@ class MixServiceTest {
         };
         CandidateScorer scorer = new CandidateScorer(profiles, ScoringWeights.DEFAULTS.withJitter(0), new Random(0));
         MixService service = new MixService(library, discovered, similarity, scorer, llm, contexts, enricher,
-                discoverer, new TimeOfDaySeeds(history, java.time.Clock.systemDefaultZone(), new Random(0)), feedback,
+                discoverer, new TimeOfDaySeeds(history, java.time.Clock.systemDefaultZone(), new Random(0)),
+                new MoodService(moods, (request, tags) -> Mood.Style.NONE, profiles, library, java.time.Clock.systemUTC(),
+                        executor, Duration.ofSeconds(1)),
+                feedback,
                 java.time.Clock.systemUTC(), executor,
                 new MixSettings(10, LLM_TIMEOUT, seedLookupTimeout, discoveryShare));
-        return service.mix(new MixRequest(PLAYER, seeds, count));
+        return service.mix(new MixRequest(PLAYER, seeds, count, fresh));
     }
 }

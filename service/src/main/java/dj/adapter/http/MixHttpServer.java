@@ -5,8 +5,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import dj.domain.MixService;
+import dj.domain.MoodService;
 import dj.domain.model.Mix;
 import dj.domain.model.MixRequest;
+import dj.domain.model.Mood;
 import dj.domain.model.Track;
 import dj.domain.model.TrackId;
 import dj.domain.port.FeedbackStore;
@@ -32,7 +34,10 @@ import java.util.function.Supplier;
  * HTTP API used by the LMS plugin.
  *
  * <ul>
- *   <li>{@code GET /mix?player=<id>&seed=<id,id,...>&count=<n>}</li>
+ *   <li>{@code GET /mix?player=<id>&seed=<id,id,...>&count=<n>&fresh=1}: {@code fresh} starts a new queue</li>
+ *   <li>{@code GET /mood?player=<id>}: the player's mood and recent moods</li>
+ *   <li>{@code POST /mood} with {@code player} and {@code text} (query or form body): sets the mood</li>
+ *   <li>{@code POST /mood/clear?player=<id>}</li>
  *   <li>{@code GET /why?player=<id>&url=<track url>}: why DJ suggested that track to that player</li>
  *   <li>{@code GET /health}</li>
  *   <li>{@code GET /status}: diagnostics from the {@code status} supplier</li>
@@ -43,19 +48,24 @@ public class MixHttpServer {
     private static final Logger LOG = System.getLogger(MixHttpServer.class.getName());
     private static final ObjectMapper JSON = new ObjectMapper();
     static final int DEFAULT_COUNT = 5;
+    private static final int MAX_FORM_BYTES = 16 * 1024;
 
     private final HttpServer server;
     private final MixService mixService;
     private final FeedbackStore feedback;
+    private final MoodService moods;
 
-    public MixHttpServer(MixService mixService, FeedbackStore feedback, int port, Supplier<Map<String, Object>> status)
-            throws IOException {
+    public MixHttpServer(MixService mixService, FeedbackStore feedback, MoodService moods, int port,
+                         Supplier<Map<String, Object>> status) throws IOException {
         this.mixService = mixService;
         this.feedback = feedback;
+        this.moods = moods;
         this.server = HttpServer.create(new InetSocketAddress(port), 0);
         server.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
         server.createContext("/mix", this::handleMix);
         server.createContext("/why", this::handleWhy);
+        server.createContext("/mood", this::handleMood);
+        server.createContext("/mood/clear", this::handleClearMood);
         server.createContext("/health", exchange -> respond(exchange, 200, Map.of("status", "ok")));
         server.createContext("/status", exchange -> respond(exchange, 200, status.get()));
     }
@@ -122,6 +132,66 @@ public class MixHttpServer {
         }
     }
 
+    private void handleMood(HttpExchange exchange) throws IOException {
+        String method = exchange.getRequestMethod();
+        if (!"GET".equals(method) && !"POST".equals(method)) {
+            respond(exchange, 405, Map.of("error", "GET or POST only"));
+            return;
+        }
+        Map<String, List<String>> params = params(exchange);
+        String player = first(params, "player");
+        if (player == null || player.isBlank()) {
+            respond(exchange, 400, Map.of("error", "missing 'player'"));
+            return;
+        }
+        try {
+            if ("POST".equals(method)) {
+                Mood mood = moods.set(player, Optional.ofNullable(first(params, "text")).orElse(""));
+                respond(exchange, 200, MoodJson.from(mood));
+                return;
+            }
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("current", moods.current(player).map(MoodJson::from).orElse(null));
+            body.put("recent", moods.recent(player).stream().map(Mood::text).toList());
+            respond(exchange, 200, body);
+        } catch (IllegalArgumentException e) {
+            respond(exchange, 400, Map.of("error", e.getMessage()));
+        } catch (RuntimeException e) {
+            LOG.log(Level.ERROR, "Mood request failed", e);
+            respond(exchange, 500, Map.of("error", "internal error"));
+        }
+    }
+
+    private void handleClearMood(HttpExchange exchange) throws IOException {
+        if (!"POST".equals(exchange.getRequestMethod())) {
+            respond(exchange, 405, Map.of("error", "POST only"));
+            return;
+        }
+        String player = first(params(exchange), "player");
+        if (player == null || player.isBlank()) {
+            respond(exchange, 400, Map.of("error", "missing 'player'"));
+            return;
+        }
+        try {
+            moods.clear(player);
+            respond(exchange, 200, Map.of("cleared", true));
+        } catch (RuntimeException e) {
+            LOG.log(Level.ERROR, "Could not clear mood", e);
+            respond(exchange, 500, Map.of("error", "internal error"));
+        }
+    }
+
+    /** Query parameters, plus those of a form-encoded body. */
+    private static Map<String, List<String>> params(HttpExchange exchange) throws IOException {
+        Map<String, List<String>> params = queryParams(exchange.getRequestURI().getRawQuery());
+        String type = exchange.getRequestHeaders().getFirst("Content-Type");
+        if (type != null && type.startsWith("application/x-www-form-urlencoded")) {
+            String body = new String(exchange.getRequestBody().readNBytes(MAX_FORM_BYTES), StandardCharsets.UTF_8);
+            queryParams(body).forEach((k, v) -> params.computeIfAbsent(k, x -> new ArrayList<>()).addAll(v));
+        }
+        return params;
+    }
+
     static MixRequest parse(String rawQuery) {
         Map<String, List<String>> params = queryParams(rawQuery);
 
@@ -148,7 +218,8 @@ public class MixHttpServer {
                 throw new IllegalArgumentException("'count' must be a number");
             }
         }
-        return new MixRequest(player, seeds, count);
+        String fresh = first(params, "fresh");
+        return new MixRequest(player, seeds, count, "1".equals(fresh) || "true".equalsIgnoreCase(fresh));
     }
 
     private static Map<String, List<String>> queryParams(String rawQuery) {
@@ -188,6 +259,16 @@ public class MixHttpServer {
         static MixResponse from(Mix mix) {
             return new MixResponse(mix.source().name().toLowerCase(),
                     mix.tracks().stream().map(t -> TrackJson.from(t, mix.reasonFor(t.id()).orElse(null))).toList());
+        }
+    }
+
+    record MoodJson(String text, List<String> tags, List<String> artists, int fromYear, int toYear, String setAt,
+                    String expiresAt) {
+
+        static MoodJson from(Mood mood) {
+            Mood.Style s = mood.style();
+            return new MoodJson(mood.text(), s.tags(), s.artists(), s.fromYear(), s.toYear(), mood.setAt().toString(),
+                    mood.setAt().plus(MoodService.LASTS).toString());
         }
     }
 

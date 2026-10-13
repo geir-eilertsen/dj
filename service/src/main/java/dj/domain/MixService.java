@@ -1,7 +1,9 @@
 package dj.domain;
 
 import dj.domain.model.Mix;
+import dj.domain.model.MixBrief;
 import dj.domain.model.MixRequest;
+import dj.domain.model.Mood;
 import dj.domain.model.Pick;
 import dj.domain.model.PlaybackContext;
 import dj.domain.model.Track;
@@ -32,11 +34,12 @@ import java.util.concurrent.TimeoutException;
 /**
  * Decides what a player should play next.
  *
- * <p>A stopped player is starting from scratch: its seeds are songs it played around this time
- * of day ({@link TimeOfDaySeeds}). Otherwise seeds are the request's tracks or else the end of
- * the player's queue, whether or not they are in the library: music played straight from a
- * streaming service still has an artist.
- * Seed artists without a profile are looked up on demand, waiting at most
+ * <p>A stopped player, or a request for a fresh start, starts from scratch: with a mood set
+ * ({@link MoodService}) the mood alone leads, otherwise songs the player played around this time
+ * of day ({@link TimeOfDaySeeds}) are the seeds. Otherwise seeds are the request's tracks or else
+ * the end of the player's queue, whether or not they are in the library: music played straight
+ * from a streaming service still has an artist. A mood also steers mixes that follow the queue.
+ * Seed and mood artists without a profile are looked up on demand, waiting at most
  * {@link MixSettings#seedLookupTimeout()}; a slow lookup finishes in the background for later
  * mixes. Artists played from a streaming service also trigger background discovery.
  *
@@ -63,6 +66,7 @@ public final class MixService {
     private final Optional<ArtistEnricher> enricher;
     private final Optional<Discoverer> discoverer;
     private final TimeOfDaySeeds timeOfDaySeeds;
+    private final MoodService moods;
     private final FeedbackStore feedback;
     private final Clock clock;
     private final Executor executor;
@@ -76,7 +80,7 @@ public final class MixService {
     public MixService(LibraryPort library, DiscoveryStore discovered, SimilarityPort similarity,
                       CandidateScorer scorer, LlmPort llm, PlaybackContextPort playbackContext,
                       Optional<ArtistEnricher> enricher, Optional<Discoverer> discoverer,
-                      TimeOfDaySeeds timeOfDaySeeds, FeedbackStore feedback, Clock clock,
+                      TimeOfDaySeeds timeOfDaySeeds, MoodService moods, FeedbackStore feedback, Clock clock,
                       Executor executor, MixSettings settings) {
         this.library = Objects.requireNonNull(library);
         this.discovered = Objects.requireNonNull(discovered);
@@ -87,6 +91,7 @@ public final class MixService {
         this.enricher = Objects.requireNonNull(enricher);
         this.discoverer = Objects.requireNonNull(discoverer);
         this.timeOfDaySeeds = Objects.requireNonNull(timeOfDaySeeds);
+        this.moods = Objects.requireNonNull(moods);
         this.feedback = Objects.requireNonNull(feedback);
         this.clock = Objects.requireNonNull(clock);
         this.executor = Objects.requireNonNull(executor);
@@ -95,8 +100,9 @@ public final class MixService {
 
     public Mix mix(MixRequest request) {
         PlaybackContext context = playbackContext.contextFor(request.playerId());
-        List<Track> candidates = candidates(request, context);
-        List<Pick> picks = askLlm(context, candidates, request.count());
+        MixBrief brief = new MixBrief(context, request.fresh() || !context.playing(), currentMood(request.playerId()));
+        List<Track> candidates = candidates(request, brief);
+        List<Pick> picks = askLlm(brief, candidates, request.count());
         List<TrackId> chosen = picks.stream().map(Pick::id).toList();
 
         List<Track> tracks = TrackSelection.select(candidates, chosen, request.count());
@@ -123,7 +129,19 @@ public final class MixService {
         }
     }
 
-    private List<Track> candidates(MixRequest request, PlaybackContext context) {
+    /** A failing mood store mustn't stop the music. */
+    private Optional<Mood> currentMood(String playerId) {
+        try {
+            return moods.current(playerId);
+        } catch (RuntimeException e) {
+            LOG.log(Level.WARNING, "Could not read the mood of " + playerId + "; mixing without it", e);
+            return Optional.empty();
+        }
+    }
+
+    private List<Track> candidates(MixRequest request, MixBrief brief) {
+        PlaybackContext context = brief.context();
+        Mood.Style mood = brief.mood().map(Mood::style).orElse(Mood.Style.NONE);
         int poolSize = Math.max(settings.candidatePoolSize(), request.count());
         List<Track> all = library.allTracks();
         Map<TrackId, Track> byId = new HashMap<>();
@@ -133,17 +151,22 @@ public final class MixService {
         Map<TrackId, Track> queued = new HashMap<>();
         queue.forEach(t -> queued.putIfAbsent(t.id(), t));
 
-        List<Track> seeds = context.playing() ? List.of() : timeOfDaySeeds.pick(request.playerId());
-        if (seeds.isEmpty()) {
-            seeds = request.seeds().stream()
-                    .map(id -> byId.containsKey(id) ? byId.get(id) : queued.get(id))
-                    .filter(Objects::nonNull)
-                    .toList();
+        List<Track> seeds = List.of();
+        if (!(brief.fresh() && brief.mood().isPresent())) {
+            seeds = brief.fresh() ? timeOfDaySeeds.pick(request.playerId()) : List.of();
+            if (seeds.isEmpty()) {
+                seeds = request.seeds().stream()
+                        .map(id -> byId.containsKey(id) ? byId.get(id) : queued.get(id))
+                        .filter(Objects::nonNull)
+                        .toList();
+            }
+            if (seeds.isEmpty()) {
+                seeds = queue.subList(Math.max(0, queue.size() - SEEDS_FROM_QUEUE), queue.size());
+            }
         }
-        if (seeds.isEmpty()) {
-            seeds = queue.subList(Math.max(0, queue.size() - SEEDS_FROM_QUEUE), queue.size());
-        }
-        lookUpSeedArtists(seeds);
+        List<String> artists = new ArrayList<>(mood.artists());
+        seeds.forEach(t -> artists.add(t.artist()));
+        lookUpArtists(artists);
         discoverAroundStreamedArtists(queue, byId);
 
         Map<TrackId, Track> pool = new LinkedHashMap<>();
@@ -154,9 +177,9 @@ public final class MixService {
             }
         }
 
-        List<Track> fromLibrary = scorer.rank(all, seeds, queue, poolSize);
+        List<Track> fromLibrary = scorer.rank(all, seeds, queue, poolSize, Double.NEGATIVE_INFINITY, mood);
         List<Track> fromDiscovery = settings.discoveryShare() > 0
-                ? scorer.rank(discovered.allTracks(), seeds, queue, poolSize, MixSettings.DISCOVERY_MIN_RELEVANCE)
+                ? scorer.rank(discovered.allTracks(), seeds, queue, poolSize, MixSettings.DISCOVERY_MIN_RELEVANCE, mood)
                 : List.of();
         for (Track track : interleave(fromLibrary, fromDiscovery, settings.discoveryShare())) {
             if (pool.size() == poolSize) {
@@ -187,20 +210,20 @@ public final class MixService {
         return merged;
     }
 
-    private void lookUpSeedArtists(List<Track> seeds) {
-        if (enricher.isEmpty() || seeds.isEmpty()) {
+    private void lookUpArtists(List<String> wanted) {
+        List<String> artists = wanted.stream().filter(a -> !a.isBlank()).distinct().toList();
+        if (enricher.isEmpty() || artists.isEmpty()) {
             return;
         }
-        List<String> artists = seeds.stream().map(Track::artist).distinct().toList();
         CompletableFuture<Void> lookup = CompletableFuture.runAsync(() -> enricher.get().ensure(artists), executor);
         try {
             lookup.get(settings.seedLookupTimeout().toMillis(), TimeUnit.MILLISECONDS);
         } catch (TimeoutException e) {
             // Not cancelled: let it finish and cache the profiles for the next mix.
-            LOG.log(Level.INFO, "Seed artist lookup still running after {0,number,#} ms; mixing without it",
+            LOG.log(Level.INFO, "Artist lookup still running after {0,number,#} ms; mixing without it",
                     settings.seedLookupTimeout().toMillis());
         } catch (ExecutionException e) {
-            LOG.log(Level.WARNING, "Seed artist lookup failed", e.getCause());
+            LOG.log(Level.WARNING, "Artist lookup failed", e.getCause());
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
@@ -237,12 +260,12 @@ public final class MixService {
         }
     }
 
-    private List<Pick> askLlm(PlaybackContext context, List<Track> candidates, int count) {
+    private List<Pick> askLlm(MixBrief brief, List<Track> candidates, int count) {
         if (candidates.isEmpty()) {
             return List.of();
         }
         CompletableFuture<List<Pick>> answer =
-                CompletableFuture.supplyAsync(() -> llm.choose(context, candidates, count), executor);
+                CompletableFuture.supplyAsync(() -> llm.choose(brief, candidates, count), executor);
         try {
             List<Pick> chosen = answer.get(settings.llmTimeout().toMillis(), TimeUnit.MILLISECONDS);
             return chosen == null ? List.of() : chosen;

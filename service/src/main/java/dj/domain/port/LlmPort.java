@@ -1,7 +1,7 @@
 package dj.domain.port;
 
+import dj.domain.model.MixBrief;
 import dj.domain.model.Pick;
-import dj.domain.model.PlaybackContext;
 import dj.domain.model.Track;
 
 import java.util.List;
@@ -15,5 +15,5 @@ import java.util.List;
 public interface LlmPort {
 
     /** Returns up to {@code count} picks in play order. May be empty. */
-    List<Pick> choose(PlaybackContext context, List<Track> candidates, int count);
+    List<Pick> choose(MixBrief brief, List<Track> candidates, int count);
 }

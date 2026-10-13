@@ -13,6 +13,8 @@ import com.anthropic.models.messages.ThinkingConfigDisabled;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dj.domain.model.ArtistProfile;
+import dj.domain.model.MixBrief;
+import dj.domain.model.Mood;
 import dj.domain.model.Pick;
 import dj.domain.model.PlaybackContext;
 import dj.domain.model.Track;
@@ -38,8 +40,8 @@ import java.util.stream.Collectors;
  * past the mix deadline (3.3-5.6 s versus 2.2-2.8 s) without better picks. There are no tool
  * calls, so disabled thinking's known failure modes don't apply.
  *
- * <p>Claude sees only what's needed for musical judgment: time and weekday, the end of the queue,
- * and compact candidate lines with style tags. It answers with candidate ids in a JSON schema;
+ * <p>Claude sees only what's needed for musical judgment: time and weekday, the listener's
+ * request if any, the end of the queue, and compact candidate lines with style tags. It answers with candidate ids in a JSON schema;
  * the domain discards any id that isn't a candidate. Any failure (network, refusal, bad output)
  * is thrown, and the mix falls back to candidate order.
  */
@@ -55,11 +57,14 @@ public class ClaudeLlm implements LlmPort {
 
             Choose the requested number of tracks (fewer only if too few candidates fit) and put \
             them in play order:
+            - If the listener asked for something, that comes first: every pick must fit the \
+            request, before continuing from what was just played and before the time of day.
             - Continue naturally from what was just played. Keep the mood and genre, and let \
             energy and style change gradually; avoid abrupt jumps between very different styles.
             - Fit the time and day: calmer late at night and early in the morning, livelier on \
             weekend afternoons and evenings, unless the music just played clearly says otherwise.
-            - Vary the artists: at most one track per artist unless there are too few candidates.
+            - Vary the artists: at most one track per artist unless there are too few candidates \
+            or the listener asked for one artist.
             - Candidates are listed best match first. "library" tracks are the listener's own \
             music, "new" tracks are new to them; keep roughly the mix of both that the top of \
             the list has.
@@ -67,7 +72,7 @@ public class ClaudeLlm implements LlmPort {
 
             For each pick, give a short reason (at most 15 words) that would help the listener \
             understand the choice, for example "Same 70s Danish rock as Gasolin', a little more \
-            upbeat". Write the reasons in %s.
+            upbeat"; if they asked for something, say how the pick fits it. Write the reasons in %s.
             """;
 
     private static final Logger LOG = System.getLogger(ClaudeLlm.class.getName());
@@ -126,7 +131,7 @@ public class ClaudeLlm implements LlmPort {
     }
 
     @Override
-    public List<Pick> choose(PlaybackContext context, List<Track> candidates, int count) {
+    public List<Pick> choose(MixBrief brief, List<Track> candidates, int count) {
         MessageCreateParams params = MessageCreateParams.builder()
                 .model(model)
                 .maxTokens(16000L)
@@ -136,7 +141,7 @@ public class ClaudeLlm implements LlmPort {
                         .effort(OutputConfig.Effort.LOW)
                         .format(PICKS_FORMAT)
                         .build())
-                .addUserMessage(userMessage(context, candidates, count))
+                .addUserMessage(userMessage(brief, candidates, count))
                 .build();
 
         long start = System.nanoTime();
@@ -157,7 +162,8 @@ public class ClaudeLlm implements LlmPort {
         return parse(text);
     }
 
-    String userMessage(PlaybackContext context, List<Track> candidates, int count) {
+    String userMessage(MixBrief brief, List<Track> candidates, int count) {
+        PlaybackContext context = brief.context();
         StringBuilder m = new StringBuilder();
         m.append("Now: ")
                 .append(context.localTime().getDayOfWeek().getDisplayName(TextStyle.FULL, Locale.ENGLISH))
@@ -165,7 +171,12 @@ public class ClaudeLlm implements LlmPort {
                 .append(String.format(Locale.ROOT, "%02d:%02d", context.localTime().getHour(), context.localTime().getMinute()))
                 .append(", player \"").append(context.playerName()).append("\".\n\n");
 
-        if (!context.playing()) {
+        brief.mood().ifPresent(mood -> m.append("The listener asked for: \"").append(mood.text()).append("\"")
+                .append(understood(mood.style())).append("\n\n"));
+
+        if (brief.fresh() && brief.mood().isPresent()) {
+            m.append("This starts a new queue for that request; it needn't follow what was playing.\n\n");
+        } else if (brief.fresh()) {
             m.append("The player is starting fresh; the candidates were chosen from what is usually played around this time.\n\n");
         } else if (!context.queue().isEmpty()) {
             List<Track> queue = context.queue();
@@ -189,6 +200,21 @@ public class ClaudeLlm implements LlmPort {
                     .append('\n');
         }
         return m.toString();
+    }
+
+    /** How DJ understood the request, so the picks agree with the candidates' ranking. */
+    private static String understood(Mood.Style style) {
+        List<String> parts = new ArrayList<>();
+        if (!style.tags().isEmpty()) {
+            parts.add("styles " + String.join(", ", style.tags()));
+        }
+        if (!style.artists().isEmpty()) {
+            parts.add("artists " + String.join(", ", style.artists()));
+        }
+        if (style.hasEra()) {
+            parts.add("released " + (style.fromYear() > 0 ? style.fromYear() : "") + "-" + (style.toYear() > 0 ? style.toYear() : ""));
+        }
+        return parts.isEmpty() ? "." : " (understood as: " + String.join("; ", parts) + ").";
     }
 
     private String describe(Track t) {

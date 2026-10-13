@@ -2,6 +2,8 @@ package dj.adapter.claude;
 
 import dj.domain.model.ArtistNames;
 import dj.domain.model.ArtistProfile;
+import dj.domain.model.MixBrief;
+import dj.domain.model.Mood;
 import dj.domain.model.Pick;
 import dj.domain.model.PlaybackContext;
 import dj.domain.model.Track;
@@ -64,7 +66,7 @@ class ClaudeLlmTest {
     void describesTheMomentTheQueueAndTheCandidates() {
         PlaybackContext context = new PlaybackContext("p1", "Kjøkken", true, List.of(playing), SUNDAY_MORNING);
 
-        String message = llm.userMessage(context, List.of(library, discovered), 5);
+        String message = llm.userMessage(new MixBrief(context, false, Optional.empty()), List.of(library, discovered), 5);
 
         assertTrue(message.startsWith("Now: Sunday 09:05, player \"Kjøkken\"."), message);
         assertTrue(message.contains("- Kim Larsen - Sommer (1983) [danish, rock]"), message);
@@ -77,9 +79,34 @@ class ClaudeLlmTest {
     void saysAStoppedPlayerIsStartingFresh() {
         PlaybackContext context = new PlaybackContext("p1", "Kjøkken", false, List.of(playing), SUNDAY_MORNING);
 
-        String message = llm.userMessage(context, List.of(library), 5);
+        String message = llm.userMessage(new MixBrief(context, true, Optional.empty()), List.of(library), 5);
 
         assertTrue(message.contains("starting fresh"), message);
+        assertFalse(message.contains("Just played"), message);
+    }
+
+    @Test
+    void passesOnTheListenersRequestAndHowItWasUnderstood() {
+        PlaybackContext context = new PlaybackContext("p1", "Kjøkken", true, List.of(playing), SUNDAY_MORNING);
+        Mood mood = new Mood("dansk 70-tallsrock", new Mood.Style(List.of("danish", "rock"), List.of("Gasolin'"), 1970, 1979),
+                Instant.EPOCH);
+
+        String message = llm.userMessage(new MixBrief(context, false, Optional.of(mood)), List.of(library), 5);
+
+        assertTrue(message.contains("The listener asked for: \"dansk 70-tallsrock\" (understood as: styles danish, rock; "
+                + "artists Gasolin'; released 1970-1979)."), message);
+        assertTrue(message.contains("Just played"), message);
+    }
+
+    @Test
+    void aFreshStartForARequestNeedntFollowTheQueue() {
+        PlaybackContext context = new PlaybackContext("p1", "Kjøkken", true, List.of(playing), SUNDAY_MORNING);
+        Mood mood = new Mood("anything by TV-2", Mood.Style.NONE, Instant.EPOCH);
+
+        String message = llm.userMessage(new MixBrief(context, true, Optional.of(mood)), List.of(library), 5);
+
+        assertTrue(message.contains("The listener asked for: \"anything by TV-2\".\n"), message);
+        assertTrue(message.contains("starts a new queue for that request"), message);
         assertFalse(message.contains("Just played"), message);
     }
 

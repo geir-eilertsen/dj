@@ -1,6 +1,7 @@
 package dj;
 
 import dj.adapter.claude.ClaudeLlm;
+import dj.adapter.claude.ClaudeMoodInterpreter;
 import dj.adapter.http.MixHttpServer;
 import dj.adapter.lastfm.LastFmArtistInfo;
 import dj.adapter.lms.LmsJsonRpcClient;
@@ -10,8 +11,10 @@ import dj.adapter.lms.LmsPlayerActivity;
 import dj.adapter.lms.LmsTidalCatalog;
 import dj.adapter.sqlite.SqliteArtistProfileStore;
 import dj.adapter.sqlite.SqliteDiscoveryStore;
+import dj.adapter.sqlite.SqliteMoodStore;
 import dj.adapter.sqlite.SqlitePlayHistory;
 import dj.adapter.stub.NoLlm;
+import dj.adapter.stub.NoMoodInterpreter;
 import dj.adapter.stub.NoSimilarity;
 import dj.domain.ArtistEnricher;
 import dj.domain.CandidateScorer;
@@ -19,10 +22,12 @@ import dj.domain.Discoverer;
 import dj.domain.HistoryRecorder;
 import dj.domain.MixService;
 import dj.domain.MixSettings;
+import dj.domain.MoodService;
 import dj.domain.ScoringWeights;
 import dj.domain.SkipPenalties;
 import dj.domain.TimeOfDaySeeds;
 import dj.domain.port.LlmPort;
+import dj.domain.port.MoodInterpreter;
 
 import java.io.IOException;
 import java.lang.System.Logger;
@@ -77,8 +82,13 @@ public final class App {
                 key, config.llmModel(), config.llmLanguage(), config.llmTimeout().plusMillis(500), profiles));
         claude.ifPresent(c -> Thread.startVirtualThread(c::warmUp));
         LlmPort llm = claude.<LlmPort>map(c -> c).orElseGet(NoLlm::new);
+        MoodInterpreter interpreter = config.anthropicApiKey()
+                .<MoodInterpreter>map(key -> new ClaudeMoodInterpreter(key, config.llmModel(), config.llmTimeout().plusMillis(500)))
+                .orElseGet(NoMoodInterpreter::new);
 
         ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
+        MoodService moods = new MoodService(new SqliteMoodStore(config.dataDir().resolve("mood.db")), interpreter,
+                profiles, library, Clock.systemUTC(), executor, config.llmTimeout());
         MixService mixService = new MixService(
                 library,
                 discovered,
@@ -92,6 +102,7 @@ public final class App {
                 enricher,
                 discoverer,
                 new TimeOfDaySeeds(history, Clock.systemDefaultZone(), new Random()),
+                moods,
                 history,
                 Clock.systemUTC(),
                 executor,
@@ -100,7 +111,7 @@ public final class App {
 
         AtomicReference<ArtistEnricher.Result> lastEnrichment = new AtomicReference<>();
         AtomicReference<Discoverer.Result> lastDiscovery = new AtomicReference<>();
-        MixHttpServer server = new MixHttpServer(mixService, history, config.port(), () -> {
+        MixHttpServer server = new MixHttpServer(mixService, history, moods, config.port(), () -> {
             Map<String, Object> status = new LinkedHashMap<>();
             status.put("artistProfiles", profiles.size());
             status.put("lastFm", config.lastFmApiKey().isPresent());

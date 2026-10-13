@@ -14,7 +14,7 @@ import java.util.Optional;
 import java.util.Set;
 
 /** Test fake for {@link MoodStore}. */
-final class InMemoryMoodStore implements MoodStore {
+class InMemoryMoodStore implements MoodStore {
 
     private final Map<String, List<Mood>> moods = new HashMap<>();
     private final Map<String, Instant> cleared = new HashMap<>();

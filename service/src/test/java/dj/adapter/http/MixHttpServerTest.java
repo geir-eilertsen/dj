@@ -29,6 +29,13 @@ class MixHttpServerTest {
     }
 
     @Test
+    void aMixFollowsTheQueueUnlessAskedToStartFresh() {
+        assertEquals(false, MixHttpServer.parse("player=p").fresh());
+        assertEquals(true, MixHttpServer.parse("player=p&fresh=1").fresh());
+        assertEquals(true, MixHttpServer.parse("player=p&fresh=true").fresh());
+    }
+
+    @Test
     void rejectsMissingPlayer() {
         assertThrows(IllegalArgumentException.class, () -> MixHttpServer.parse("seed=1"));
         assertThrows(IllegalArgumentException.class, () -> MixHttpServer.parse(null));
