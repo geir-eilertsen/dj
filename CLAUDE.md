@@ -41,8 +41,10 @@ natural-language requests and explanations.
 - Distribution: LMS repository file `repo.xml` (raw GitHub URL), zip on GitHub release
   `plugin-v<version>`; `tools/release-plugin.sh` builds both (install.xml at the zip's top,
   SHA-1 checked by LMS). Bump `install.xml` `<version>` per release. The service image is
-  `geireilertsen/dj` on Docker Hub (amd64 + arm64; `docker buildx --builder dj-builder ...
-  --push service`).
+  `geireilertsen/dj` on Docker Hub (amd64 + arm64), pushed by GitHub Actions
+  (`.github/workflows/image.yml`) on every push to main touching `service/`: tags `latest`,
+  the pom.xml version, `sha-<commit>`; secrets `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`.
+  Bump the pom version per release. By hand: `docker buildx --builder dj-builder ... --push service`.
 
 ### Suggestion service (`/service`, Java 21, Maven, plain Java, no framework)
 Hexagonal: `dj.domain` has no framework dependencies (JDK only); adapters live in `dj.adapter.*`;
