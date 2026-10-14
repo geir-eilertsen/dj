@@ -64,6 +64,32 @@ class ConcertFinderTest {
     }
 
     @Test
+    void keepsTheChosenCountriesAndAppliesAChangeToCachedLookups() {
+        online.put("Opeth", List.of(concert("2026-11-20", "Chicago", "US"), concert("2026-12-01", "Oslo", "NO"),
+                concert("2026-12-05", "Toronto", "CA")));
+        finder().forArtist("Opeth");
+
+        ConcertFinder americas = new ConcertFinder(() -> library, discovered, source, store, clock, MAX_AGE,
+                ConcertFinder.countries("us, ca"));
+        assertEquals(List.of("Chicago", "Toronto"), americas.forArtist("Opeth").stream().map(Concert::city).toList());
+
+        ConcertFinder everywhere = new ConcertFinder(() -> library, discovered, source, store, clock, MAX_AGE,
+                ConcertFinder.countries("all"));
+        assertEquals(3, everywhere.forArtist("Opeth").size());
+        assertEquals(1, asked.size());
+    }
+
+    @Test
+    void readsTheCountrySetting() {
+        assertEquals(ConcertFinder.EUROPE, ConcertFinder.countries("europe"));
+        assertTrue(ConcertFinder.countries("Europe,TR").containsAll(Set.of("TR", "NO", "ES")));
+        assertEquals(Set.of("US", "CA"), ConcertFinder.countries(" us ,CA,"));
+        assertEquals(Set.of(), ConcertFinder.countries("all"));
+        assertEquals(Set.of(), ConcertFinder.countries(""));
+        assertThrows(IllegalArgumentException.class, () -> ConcertFinder.countries("Norway"));
+    }
+
+    @Test
     void usesTheCacheUntilItIsOld() {
         online.put("Opeth", List.of(concert("2026-12-01", "Oslo", "NO")));
         ConcertFinder finder = finder();

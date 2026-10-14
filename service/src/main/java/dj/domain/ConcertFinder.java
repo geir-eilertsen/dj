@@ -20,14 +20,17 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.regex.Pattern;
 
 /**
- * Finds upcoming concerts in Europe by the artists the listener plays: on demand for the artist
- * that's playing, and in a periodic scan of every library and listened artist.
+ * Finds upcoming concerts in the listener's region (Europe by default) by the artists the listener
+ * plays: on demand for the artist that's playing, and in a periodic scan of every library and
+ * listened artist.
  *
  * <p>Lookups are cached in the {@link ConcertStore} for {@code maxAge}, including empty ones, so
  * an artist is asked about at most about once per {@code maxAge}.
@@ -55,20 +58,58 @@ public class ConcertFinder {
     private final ConcertStore store;
     private final Clock clock;
     private final Duration maxAge;
+    private final Set<String> countries;
 
-    /** @param clock also gives the time zone that decides which concerts are still upcoming */
+    /** Concerts in Europe ({@link #EUROPE}). */
     public ConcertFinder(LibraryPort library, DiscoveryStore discovered, ConcertSource source, ConcertStore store,
                          Clock clock, Duration maxAge) {
+        this(library, discovered, source, store, clock, maxAge, EUROPE);
+    }
+
+    /**
+     * @param clock     also gives the time zone that decides which concerts are still upcoming
+     * @param countries ISO 3166-1 alpha-2 codes of the countries to keep; empty keeps every country
+     */
+    public ConcertFinder(LibraryPort library, DiscoveryStore discovered, ConcertSource source, ConcertStore store,
+                         Clock clock, Duration maxAge, Set<String> countries) {
         this.library = library;
         this.discovered = discovered;
         this.source = source;
         this.store = store;
         this.clock = clock;
         this.maxAge = maxAge;
+        this.countries = Set.copyOf(countries);
     }
 
     /**
-     * Upcoming concerts in Europe by this artist, from the cache if it's fresh.
+     * The countries named by a setting such as "europe", "europe,TR", "US,CA" or "all": ISO codes
+     * and the word "europe", comma-separated. "all" (or nothing) gives an empty set: every country.
+     *
+     * @throws IllegalArgumentException for anything that's not a two-letter code
+     */
+    public static Set<String> countries(String setting) {
+        Set<String> codes = new TreeSet<>();
+        for (String part : setting.split(",")) {
+            String code = part.strip().toUpperCase(Locale.ROOT);
+            if (code.isEmpty()) {
+                continue;
+            }
+            if (code.equals("ALL")) {
+                return Set.of();
+            }
+            if (code.equals("EUROPE")) {
+                codes.addAll(EUROPE);
+            } else if (code.matches("[A-Z]{2}")) {
+                codes.add(code);
+            } else {
+                throw new IllegalArgumentException("Not a country code: " + part.strip());
+            }
+        }
+        return codes;
+    }
+
+    /**
+     * Upcoming concerts in the region by this artist, from the cache if it's fresh.
      *
      * @throws RuntimeException if the source fails and nothing is known about the artist
      */
@@ -150,8 +191,8 @@ public class ConcertFinder {
     }
 
     private ArtistConcerts lookUp(String artist) {
+        // Every country is kept, so a change of region needs no new lookups
         List<Concert> concerts = source.upcoming(artist).stream()
-                .filter(c -> EUROPE.contains(c.countryCode()))
                 .map(c -> new Concert(artist, c.title(), c.date(), c.time(), c.venue(), c.city(), c.countryCode(), c.url()))
                 .sorted(Comparator.comparing(Concert::date))
                 .toList();
@@ -187,9 +228,13 @@ public class ConcertFinder {
         return List.copyOf(ordered);
     }
 
+    /** The ones in the region, from today. */
     private List<Concert> upcoming(List<Concert> concerts) {
         LocalDate today = LocalDate.now(clock);
-        return concerts.stream().filter(c -> !c.date().isBefore(today)).toList();
+        return concerts.stream()
+                .filter(c -> countries.isEmpty() || countries.contains(c.countryCode()))
+                .filter(c -> !c.date().isBefore(today))
+                .toList();
     }
 
     private boolean isFresh(ArtistConcerts concerts, Duration age) {

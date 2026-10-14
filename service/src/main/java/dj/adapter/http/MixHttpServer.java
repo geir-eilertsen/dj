@@ -48,8 +48,8 @@ import java.util.function.Supplier;
  *   <li>{@code POST /mood} with {@code player} and {@code text} (query or form body): sets the mood</li>
  *   <li>{@code POST /mood/clear?player=<id>}</li>
  *   <li>{@code GET /why?player=<id>&url=<track url>}: why DJ suggested that track to that player</li>
- *   <li>{@code GET /concerts?artist=<name>}: that artist's upcoming concerts in Europe (looked up if need be)</li>
- *   <li>{@code GET /concerts}: every known artist with upcoming concerts in Europe</li>
+ *   <li>{@code GET /concerts?artist=<name>}: that artist's upcoming concerts in the chosen countries (looked up if need be)</li>
+ *   <li>{@code GET /concerts}: every known artist with upcoming concerts in the chosen countries</li>
  *   <li>{@code GET /health}</li>
  *   <li>{@code GET /status}: diagnostics from the {@code status} supplier</li>
  * </ul>

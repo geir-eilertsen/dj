@@ -1,5 +1,7 @@
 package dj;
 
+import dj.domain.ConcertFinder;
+
 import java.net.URI;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -15,7 +17,7 @@ record Config(URI lmsUrl, int port, int candidatePoolSize, Duration llmTimeout, 
               Duration seedLookupTimeout, double discoveryShare,
               Optional<String> anthropicApiKey, String llmModel, String llmLanguage,
               Optional<String> ticketmasterApiKey, boolean madnessLive, Duration concertLookupTimeout,
-              Duration concertMaxAge) {
+              Duration concertMaxAge, Set<String> concertCountries) {
 
     static Config fromEnv(Map<String, String> env) {
         return new Config(
@@ -36,7 +38,8 @@ record Config(URI lmsUrl, int port, int candidatePoolSize, Duration llmTimeout, 
                 Optional.ofNullable(env.get("TICKETMASTER_API_KEY")).map(String::strip).filter(k -> !k.isEmpty()),
                 !Set.of("0", "false", "no", "off").contains(env.getOrDefault("DJ_MADNESS_LIVE", "1").strip().toLowerCase()),
                 Duration.ofMillis(Long.parseLong(env.getOrDefault("DJ_CONCERT_LOOKUP_MS", "4000"))),
-                Duration.ofHours(Long.parseLong(env.getOrDefault("DJ_CONCERT_MAX_AGE_HOURS", "24"))));
+                Duration.ofHours(Long.parseLong(env.getOrDefault("DJ_CONCERT_MAX_AGE_HOURS", "24"))),
+                ConcertFinder.countries(env.getOrDefault("DJ_CONCERT_COUNTRIES", "europe")));
     }
 
     List<String> concertSources() {
@@ -48,6 +51,14 @@ record Config(URI lmsUrl, int port, int candidatePoolSize, Duration llmTimeout, 
         return sources;
     }
 
+    /** "all", "europe" or the country codes. */
+    String concertRegion() {
+        if (concertCountries.isEmpty()) {
+            return "all";
+        }
+        return concertCountries.equals(ConcertFinder.EUROPE) ? "europe" : String.join(",", concertCountries);
+    }
+
     /** Never log the API keys. */
     @Override
     public String toString() {
@@ -57,7 +68,7 @@ record Config(URI lmsUrl, int port, int candidatePoolSize, Duration llmTimeout, 
                 + ", enrichmentInterval=" + enrichmentInterval + ", artistMaxAge=" + artistMaxAge
                 + ", seedLookupTimeout=" + seedLookupTimeout + ", discoveryShare=" + discoveryShare
                 + ", llm=" + (anthropicApiKey.isPresent() ? llmModel + " (" + llmLanguage + ")" : "not configured")
-                + ", concerts=" + concertSources()
+                + ", concerts=" + concertSources() + " in " + concertRegion()
                 + ", concertLookupTimeout=" + concertLookupTimeout + ", concertMaxAge=" + concertMaxAge + "]";
     }
 }

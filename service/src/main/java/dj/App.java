@@ -127,7 +127,7 @@ public final class App {
         Optional<ConcertFinder> concerts = concertSources.isEmpty() ? Optional.empty() : Optional.of(new ConcertFinder(
                 library, discovered, new CombinedConcertSource(concertSources),
                 new SqliteConcertStore(config.dataDir().resolve("concerts.db")), Clock.systemDefaultZone(),
-                config.concertMaxAge()));
+                config.concertMaxAge(), config.concertCountries()));
 
         AtomicReference<ArtistEnricher.Result> lastEnrichment = new AtomicReference<>();
         AtomicReference<Discoverer.Result> lastDiscovery = new AtomicReference<>();
@@ -142,6 +142,7 @@ public final class App {
             status.put("listenedArtists", discovered.listenedArtists().size());
             status.put("lastDiscovery", lastDiscovery.get());
             status.put("concerts", config.concertSources());
+            status.put("concertRegion", config.concertRegion());
             status.put("artistsWithConcerts", concerts.map(c -> c.upcoming().size()).orElse(null));
             status.put("lastConcertScan", lastConcertScan.get());
             return status;
