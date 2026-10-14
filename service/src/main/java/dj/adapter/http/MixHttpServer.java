@@ -50,6 +50,7 @@ import java.util.function.Supplier;
  *   <li>{@code GET /mood?player=<id>}: the player's mood and recent moods</li>
  *   <li>{@code POST /mood} with {@code player} and {@code text} (query or form body): sets the mood</li>
  *   <li>{@code POST /mood/clear?player=<id>}</li>
+ *   <li>{@code POST /mood/forget} with {@code player} and {@code text}: takes it off the recent moods</li>
  *   <li>{@code GET /why?player=<id>&url=<track url>}: why DJ suggested that track to that player</li>
  *   <li>{@code GET /concerts?artist=<name>}: that artist's upcoming concerts in the chosen countries (looked up if need be)</li>
  *   <li>{@code GET /concerts}: every known artist with upcoming concerts in the chosen countries</li>
@@ -87,6 +88,7 @@ public class MixHttpServer {
         server.createContext("/why", this::handleWhy);
         server.createContext("/mood", this::handleMood);
         server.createContext("/mood/clear", this::handleClearMood);
+        server.createContext("/mood/forget", this::handleForgetMood);
         server.createContext("/concerts", this::handleConcerts);
         server.createContext("/concerts/providers", this::handleConcertProviders);
         server.createContext("/health", exchange -> respond(exchange, 200, Map.of("status", "ok")));
@@ -281,6 +283,28 @@ public class MixHttpServer {
             respond(exchange, 200, Map.of("cleared", true));
         } catch (RuntimeException e) {
             LOG.log(Level.ERROR, "Could not clear mood", e);
+            respond(exchange, 500, Map.of("error", "internal error"));
+        }
+    }
+
+    private void handleForgetMood(HttpExchange exchange) throws IOException {
+        if (!"POST".equals(exchange.getRequestMethod())) {
+            respond(exchange, 405, Map.of("error", "POST only"));
+            return;
+        }
+        Map<String, List<String>> params = params(exchange);
+        String player = first(params, "player");
+        if (player == null || player.isBlank()) {
+            respond(exchange, 400, Map.of("error", "missing 'player'"));
+            return;
+        }
+        try {
+            moods.forget(player, first(params, "text"));
+            respond(exchange, 200, Map.of("recent", moods.recent(player).stream().map(Mood::text).toList()));
+        } catch (IllegalArgumentException e) {
+            respond(exchange, 400, Map.of("error", e.getMessage()));
+        } catch (RuntimeException e) {
+            LOG.log(Level.ERROR, "Could not forget mood", e);
             respond(exchange, 500, Map.of("error", "internal error"));
         }
     }

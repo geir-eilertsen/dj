@@ -26,7 +26,8 @@ import java.util.Set;
  */
 public class SqliteMoodStore implements MoodStore {
 
-    private static final int SCHEMA_VERSION = 1;
+    /** 2: {@code forgotten_at}. */
+    private static final int SCHEMA_VERSION = 2;
     private static final String COLUMNS = "text, tags, artists, from_year, to_year, set_at";
     /** Rows scanned for recent moods; repeats of the same text are skipped. */
     private static final int RECENT_SCAN = 100;
@@ -89,13 +90,37 @@ public class SqliteMoodStore implements MoodStore {
     public List<Mood> recent(String playerId, int limit) {
         List<Mood> recent = new ArrayList<>();
         Set<String> seen = new HashSet<>();
-        for (Mood mood : select("SELECT " + COLUMNS + " FROM mood WHERE player = ? ORDER BY set_at DESC LIMIT "
-                + RECENT_SCAN, playerId)) {
+        for (Mood mood : select("SELECT " + COLUMNS + " FROM mood WHERE player = ? AND forgotten_at IS NULL "
+                + "ORDER BY set_at DESC LIMIT " + RECENT_SCAN, playerId)) {
             if (recent.size() < limit && seen.add(mood.text().toLowerCase(Locale.ROOT))) {
                 recent.add(mood);
             }
         }
         return recent;
+    }
+
+    @Override
+    public synchronized void forget(String playerId, String text, Instant at) {
+        // Matched here, not with SQLite's lower(), which leaves "Ø" and other non-ASCII letters alone
+        String wanted = text.toLowerCase(Locale.ROOT);
+        try (Connection db = DriverManager.getConnection(url);
+             PreparedStatement select = db.prepareStatement(
+                     "SELECT rowid, text FROM mood WHERE player = ? AND forgotten_at IS NULL");
+             PreparedStatement update = db.prepareStatement("UPDATE mood SET forgotten_at = ? WHERE rowid = ?")) {
+            select.setString(1, playerId);
+            try (ResultSet rs = select.executeQuery()) {
+                while (rs.next()) {
+                    if (rs.getString(2).toLowerCase(Locale.ROOT).equals(wanted)) {
+                        update.setLong(1, at.toEpochMilli());
+                        update.setLong(2, rs.getLong(1));
+                        update.addBatch();
+                    }
+                }
+            }
+            update.executeBatch();
+        } catch (SQLException e) {
+            throw new IllegalStateException("Could not forget mood", e);
+        }
     }
 
     private List<Mood> select(String sql, String playerId) {
@@ -143,6 +168,9 @@ public class SqliteMoodStore implements MoodStore {
                             cleared_at INTEGER
                         )""");
                 st.executeUpdate("CREATE INDEX IF NOT EXISTS mood_by_player_time ON mood (player, set_at)");
+            }
+            if (version < 2) {
+                st.executeUpdate("ALTER TABLE mood ADD COLUMN forgotten_at INTEGER");
             }
             st.executeUpdate("PRAGMA user_version = " + SCHEMA_VERSION);
         }

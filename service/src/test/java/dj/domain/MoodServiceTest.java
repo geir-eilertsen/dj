@@ -106,6 +106,23 @@ class MoodServiceTest {
     }
 
     @Test
+    void forgettingARequestTakesItOffTheRecentOnesButLeavesTheMoodOn() {
+        MoodService service = service(interpreting(PROG));
+        service.set(PLAYER, "prog");
+        service.set(PLAYER, "jazz");
+        service.set(PLAYER, "Prog");
+
+        service.forget(PLAYER, " PROG ");
+
+        assertEquals(List.of("jazz"), service.recent(PLAYER).stream().map(Mood::text).toList());
+        assertEquals("Prog", service.current(PLAYER).orElseThrow().text());
+        assertThrows(IllegalArgumentException.class, () -> service.forget(PLAYER, " "));
+
+        service.set(PLAYER, "prog");
+        assertEquals(List.of("prog", "jazz"), service.recent(PLAYER).stream().map(Mood::text).toList());
+    }
+
+    @Test
     void moodsArePerPlayer() {
         service(interpreting(PROG)).set(PLAYER, "prog");
 

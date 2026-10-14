@@ -77,6 +77,24 @@ class MoodEndpointTest {
     }
 
     @Test
+    void forgetsARecentMood() throws Exception {
+        send(HttpRequest.newBuilder(uri("/mood?player=" + PLAYER + "&text=Kim+Larsen")).POST(HttpRequest.BodyPublishers.noBody()));
+
+        HttpResponse<String> forgot = send(HttpRequest.newBuilder(uri("/mood/forget"))
+                .header("Content-Type", "application/x-www-form-urlencoded")
+                .POST(HttpRequest.BodyPublishers.ofString("player=" + PLAYER + "&text=kim+larsen")));
+
+        assertEquals(200, forgot.statusCode(), forgot.body());
+        assertEquals(0, JSON.readTree(forgot.body()).path("recent").size());
+        JsonNode state = JSON.readTree(send(HttpRequest.newBuilder(uri("/mood?player=" + PLAYER)).GET()).body());
+        assertEquals(0, state.path("recent").size());
+        assertEquals("Kim Larsen", state.path("current").path("text").asText());
+        assertEquals(400, send(HttpRequest.newBuilder(uri("/mood/forget?player=" + PLAYER))
+                .POST(HttpRequest.BodyPublishers.noBody())).statusCode());
+        assertEquals(405, send(HttpRequest.newBuilder(uri("/mood/forget?player=" + PLAYER)).GET()).statusCode());
+    }
+
+    @Test
     void rejectsAnEmptyMoodOrAMissingPlayer() throws Exception {
         assertEquals(400, send(HttpRequest.newBuilder(uri("/mood?player=p&text=%20"))
                 .POST(HttpRequest.BodyPublishers.noBody())).statusCode());

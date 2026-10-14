@@ -68,8 +68,10 @@ Ports (`dj.domain.port`):
   Adapter `SqliteDiscoveryStore` (`discovery.db`, in memory).
 - `PlayHistory` / `FeedbackStore`: DJ's own listening log, suggestions and skips.
   Adapter `SqlitePlayHistory` (`history.db`, schema v3).
-- `MoodStore`: per-player moods (every set is a row; clear stamps `cleared_at`).
-  Adapter `SqliteMoodStore` (`mood.db`).
+- `MoodStore`: per-player moods (every set is a row; clear stamps `cleared_at`; forget stamps
+  `forgotten_at` on every row with that text, case-insensitive in Java, which hides it from recent
+  moods only: a mood that's on stays on, setting it again brings it back).
+  Adapter `SqliteMoodStore` (`mood.db`, schema v2).
 - `MoodInterpreter`: request text → `Mood.Style(tags, artists, fromYear, toYear)`, choosing
   tags from the 150 most common among artists' top 8 Last.fm tags. Adapter
   `ClaudeMoodInterpreter` (same settings as `ClaudeLlm`); `NoMoodInterpreter` without a key.
@@ -154,7 +156,7 @@ HTTP API (`dj.adapter.http`): `GET /mix?player=<mac>&seed=<id,id,..>&count=<n>&f
 `{"source","tracks":[{"id","url","title","artist","album","reason"?}]}`;
 `GET /why?player=&url=` (404 if DJ gave no reason); `GET /mood?player=` →
 `{"current","recent"}`; `POST /mood` (`player`, `text`; query or form) → the understood mood;
-`POST /mood/clear?player=`; `GET /concerts?artist=` → `{"artist","concerts":[{date,time?,title,venue,city,country,url?}]}`
+`POST /mood/clear?player=`; `POST /mood/forget` (`player`, `text`) → `{"recent"}`; `GET /concerts?artist=` → `{"artist","concerts":[{date,time?,title,venue,city,country,url?}]}`
 (504 after `DJ_CONCERT_LOOKUP_MS`); `GET /concerts` → `{"artists":[{artist,concerts}]}`;
 `GET /concerts/providers` → `{"providers":[{id,name,coverage,enabled,unavailable?}]}`;
 `POST /concerts/providers` (`enabled=id,id`, may be empty) → the same; `GET /health`; `GET /status`.
@@ -205,6 +207,7 @@ service → `http://localhost:9000`).
   reasons feed back into the prompt.
 - **Step 4 (done):** moods. DJ menu: "Play a mood…" (OPML `search` item, `cachesearch 0`),
   recent moods (passthrough text), "Clear mood". Setting one starts a fresh mix of 10.
+  Each recent mood opens "Play" / "Forget" (static `items`; Forget goes back with `nextWindow => 'grandparent'`).
   Ideas: discover around mood artists not in the library; per-mood skip learning.
 - Local audio + bliss-analyser would make `SimilarityPort` real.
 

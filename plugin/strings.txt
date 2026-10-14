@@ -69,6 +69,18 @@ PLUGIN_DJ_MOOD_CLEARED
 	EN	Mood cleared
 	NO	Stemningen er fjernet
 
+PLUGIN_DJ_MOOD_PLAY
+	EN	Play
+	NO	Spill
+
+PLUGIN_DJ_MOOD_FORGET
+	EN	Forget
+	NO	Glem
+
+PLUGIN_DJ_MOOD_FORGOTTEN
+	EN	Forgotten
+	NO	Glemt
+
 PLUGIN_DJ_MOOD_FAILED
 	EN	Could not set the mood
 	NO	Kunne ikke sette stemningen

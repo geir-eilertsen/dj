@@ -17,6 +17,12 @@ public interface MoodStore {
     /** Clears the player's mood; it stays among the recent ones. */
     void clear(String playerId, Instant at);
 
-    /** Moods set on the player, newest first, one per text (ignoring case). */
+    /** Moods set on the player and not forgotten, newest first, one per text (ignoring case). */
     List<Mood> recent(String playerId, int limit);
+
+    /**
+     * Leaves every earlier setting of this text (ignoring case) out of the recent moods. A mood
+     * that's on stays on; setting the text again brings it back.
+     */
+    void forget(String playerId, String text, Instant at);
 }

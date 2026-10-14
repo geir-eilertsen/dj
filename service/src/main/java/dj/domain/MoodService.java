@@ -99,6 +99,19 @@ public final class MoodService {
         store.clear(playerId, clock.instant());
     }
 
+    /**
+     * Takes a request off the player's recent moods. If it's the current mood, it stays on.
+     *
+     * @throws IllegalArgumentException if the request is blank
+     */
+    public void forget(String playerId, String request) {
+        String text = request == null ? "" : request.strip().replaceAll("\\s+", " ");
+        if (text.isEmpty()) {
+            throw new IllegalArgumentException("the mood is empty");
+        }
+        store.forget(playerId, text, clock.instant());
+    }
+
     /** Recent moods for one-tap reuse, newest first. */
     public List<Mood> recent(String playerId) {
         return store.recent(playerId, RECENT);

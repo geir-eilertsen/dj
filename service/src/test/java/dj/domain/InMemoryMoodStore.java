@@ -5,8 +5,10 @@ import dj.domain.port.MoodStore;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -18,6 +20,8 @@ class InMemoryMoodStore implements MoodStore {
 
     private final Map<String, List<Mood>> moods = new HashMap<>();
     private final Map<String, Instant> cleared = new HashMap<>();
+    /** By identity: a mood set again equals the forgotten one when the clock stands still. */
+    private final Set<Mood> forgotten = Collections.newSetFromMap(new IdentityHashMap<>());
 
     @Override
     public void save(String playerId, Mood mood) {
@@ -45,10 +49,17 @@ class InMemoryMoodStore implements MoodStore {
         List<Mood> recent = new ArrayList<>();
         Set<String> seen = new HashSet<>();
         for (Mood mood : moods.getOrDefault(playerId, List.of()).reversed()) {
-            if (recent.size() < limit && seen.add(mood.text().toLowerCase(Locale.ROOT))) {
+            if (!forgotten.contains(mood) && recent.size() < limit && seen.add(mood.text().toLowerCase(Locale.ROOT))) {
                 recent.add(mood);
             }
         }
         return recent;
+    }
+
+    @Override
+    public void forget(String playerId, String text, Instant at) {
+        moods.getOrDefault(playerId, List.of()).stream()
+                .filter(m -> m.text().toLowerCase(Locale.ROOT).equals(text.toLowerCase(Locale.ROOT)))
+                .forEach(forgotten::add);
     }
 }

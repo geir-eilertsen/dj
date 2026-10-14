@@ -163,13 +163,24 @@ sub handleFeed {
 			};
 		}
 
+		# Each recent mood opens "Play" and "Forget"
 		for my $text (@{ $moods->{recent} || [] }) {
 			push @items, {
-				name        => $text,
-				type        => 'link',
-				url         => \&playMood,
-				passthrough => [{ text => $text }],
-				nextWindow  => 'nowPlaying',
+				name  => $text,
+				type  => 'link',
+				items => [{
+					name        => cstring($client, 'PLUGIN_DJ_MOOD_PLAY'),
+					type        => 'link',
+					url         => \&playMood,
+					passthrough => [{ text => $text }],
+					nextWindow  => 'nowPlaying',
+				},{
+					name        => cstring($client, 'PLUGIN_DJ_MOOD_FORGET'),
+					type        => 'link',
+					url         => \&forgetMood,
+					passthrough => [{ text => $text }],
+					nextWindow  => 'grandparent',
+				}],
 			};
 		}
 
@@ -411,6 +422,23 @@ sub clearMood {
 
 	_callService('POST', '/mood/clear', { player => $client->id },
 		sub { $reply->('PLUGIN_DJ_MOOD_CLEARED') },
+		sub { $reply->('PLUGIN_DJ_START_FAILED') });
+}
+
+# Takes a request off the player's recent moods. A mood that's on stays on.
+sub forgetMood {
+	my ($client, $cb, $args, $pass) = @_;
+
+	return _noPlayer($cb) unless $client;
+	$client = $client->master;
+
+	my $reply = sub {
+		my ($token) = @_;
+		$cb->({ items => [{ name => cstring($client, $token), type => 'text', showBriefly => 1 }] });
+	};
+
+	_callService('POST', '/mood/forget', { player => $client->id, text => ($pass && $pass->{text}) || '' },
+		sub { $reply->('PLUGIN_DJ_MOOD_FORGOTTEN') },
 		sub { $reply->('PLUGIN_DJ_START_FAILED') });
 }
 

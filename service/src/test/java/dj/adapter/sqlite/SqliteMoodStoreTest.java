@@ -61,4 +61,40 @@ class SqliteMoodStoreTest {
         assertEquals(List.of("c", "A", "b"), store.recent("p1", 5).stream().map(Mood::text).toList());
         assertEquals(List.of("c", "A"), store.recent("p1", 2).stream().map(Mood::text).toList());
     }
+
+    @Test
+    void forgottenMoodsLeaveTheRecentOnesUntilSetAgain() {
+        SqliteMoodStore store = new SqliteMoodStore(dir.resolve("mood.db"));
+        store.save("p1", new Mood("Øl og prog", PROG, T0));
+        store.save("p1", new Mood("jazz", PROG, T0.plusSeconds(1)));
+        store.save("p1", new Mood("øl og prog", PROG, T0.plusSeconds(2)));
+        store.save("p2", new Mood("øl og prog", PROG, T0));
+
+        store.forget("p1", "ØL OG PROG", T0.plusSeconds(3));
+
+        SqliteMoodStore reopened = new SqliteMoodStore(dir.resolve("mood.db"));
+        assertEquals(List.of("jazz"), reopened.recent("p1", 5).stream().map(Mood::text).toList());
+        assertEquals("øl og prog", reopened.latest("p1").orElseThrow().text());
+        assertEquals(1, reopened.recent("p2", 5).size());
+
+        reopened.save("p1", new Mood("øl og prog", PROG, T0.plusSeconds(4)));
+        assertEquals(List.of("øl og prog", "jazz"), reopened.recent("p1", 5).stream().map(Mood::text).toList());
+    }
+
+    @Test
+    void addsForgettingToAVersion1Database() throws Exception {
+        java.nio.file.Path db = dir.resolve("mood.db");
+        try (java.sql.Connection c = java.sql.DriverManager.getConnection("jdbc:sqlite:" + db);
+             java.sql.Statement st = c.createStatement()) {
+            st.executeUpdate("CREATE TABLE mood (player TEXT NOT NULL, text TEXT NOT NULL, tags TEXT NOT NULL, "
+                    + "artists TEXT NOT NULL, from_year INTEGER NOT NULL, to_year INTEGER NOT NULL, "
+                    + "set_at INTEGER NOT NULL, cleared_at INTEGER)");
+            st.executeUpdate("INSERT INTO mood VALUES ('p1', 'prog', '', '', 0, 0, 1, NULL)");
+            st.executeUpdate("PRAGMA user_version = 1");
+        }
+        SqliteMoodStore store = new SqliteMoodStore(db);
+        assertEquals(1, store.recent("p1", 5).size());
+        store.forget("p1", "prog", T0);
+        assertEquals(List.of(), store.recent("p1", 5));
+    }
 }
