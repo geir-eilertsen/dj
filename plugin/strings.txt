@@ -2,8 +2,8 @@ PLUGIN_DJ
 	EN	DJ
 
 PLUGIN_DJ_DESC
-	EN	Suggests what to play next using the dj suggestion service.
-	NO	Foreslår hva som skal spilles videre ved hjelp av dj-tjenesten.
+	EN	AI DJ: Start DJ, moods in your own words and Don't Stop The Music suggestions, with a reason for every song, and upcoming concerts by the artists you play. Needs the separate DJ service running in Docker: see https://github.com/geir-eilertsen/dj
+	NO	AI-DJ: Start DJ, stemninger med egne ord og forslag til Ikke stopp musikken, med en begrunnelse for hver låt, og kommende konserter med artistene du spiller. Krever den separate DJ-tjenesten i Docker: se https://github.com/geir-eilertsen/dj
 
 PLUGIN_DJ_DSTM
 	EN	DJ (AI suggestions)
@@ -14,8 +14,8 @@ PLUGIN_DJ_SERVICE_URL
 	NO	Adresse til forslagstjenesten
 
 PLUGIN_DJ_SERVICE_URL_DESC
-	EN	Base URL of the dj suggestion service, e.g. http://localhost:9010
-	NO	Grunnadressen til dj-tjenesten, f.eks. http://localhost:9010
+	EN	Address of the DJ service, which does the thinking for this plugin. Default http://localhost:9010, for the service running in Docker with host networking on the LMS machine. How to set it up: https://github.com/geir-eilertsen/dj
+	NO	Adressen til DJ-tjenesten, som gjør tenkingen for denne utvidelsen. Standard http://localhost:9010, for tjenesten i Docker med vertsnettverk på LMS-maskinen. Slik settes den opp: https://github.com/geir-eilertsen/dj
 
 PLUGIN_DJ_TIMEOUT
 	EN	Timeout (seconds)
@@ -34,8 +34,12 @@ PLUGIN_DJ_STARTED
 	NO	DJ spiller
 
 PLUGIN_DJ_START_FAILED
-	EN	Could not get suggestions from the DJ service
-	NO	Fikk ikke forslag fra DJ-tjenesten
+	EN	Could not get suggestions from the DJ service. Is it running, and is its address right in the DJ plugin settings?
+	NO	Fikk ikke forslag fra DJ-tjenesten. Kjører den, og er adressen riktig i innstillingene for DJ?
+
+PLUGIN_DJ_NO_PLAYER
+	EN	Choose a player first.
+	NO	Velg en spiller først.
 
 PLUGIN_DJ_STARTED_MOOD
 	EN	DJ is playing: %s
@@ -81,9 +85,9 @@ PLUGIN_DJ_CONCERTS
 	EN	Upcoming concerts
 	NO	Kommende konserter
 
-PLUGIN_DJ_CONCERTS_IN_EUROPE
-	EN	Concerts in Europe (%s)
-	NO	Konserter i Europa (%s)
+PLUGIN_DJ_CONCERTS_COUNT
+	EN	Upcoming concerts (%s)
+	NO	Kommende konserter (%s)
 
 PLUGIN_DJ_CONCERTS_NONE
 	EN	No upcoming concerts found yet. DJ checks the artists you play once a day.

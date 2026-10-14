@@ -7,8 +7,11 @@ package Plugins::DJ::Plugin;
 #   queue with a fresh mix and hands over to DSTM to keep it going, and "Play a mood...", which
 #   does the same for a request in the listener's own words ("mellow prog for Sunday morning").
 #   The mood keeps steering DJ's suggestions until it's cleared, Start DJ is used, or 4 hours pass.
-# - It shows upcoming concerts in Europe (Ticketmaster, Madness Live!) by the artist that's playing (track info, and a pop-up in
-#   Material Skin), and lists every concert by the artists the listener plays ("Upcoming concerts").
+# - It shows upcoming concerts (Ticketmaster, Madness Live!) in the listener's region by the artist
+#   that's playing (track info, and a pop-up in Material Skin), and lists every concert by the
+#   artists the listener plays ("Upcoming concerts").
+#
+# Needs the dj service (Docker image geireilertsen/dj): https://github.com/geir-eilertsen/dj
 #
 # The service does all the thinking; this plugin only collects seed tracks, makes one
 # non-blocking HTTP request and hands the returned URLs to LMS.
@@ -114,6 +117,10 @@ sub postinitPlugin {
 	else {
 		$log->warn("Don't Stop The Music is disabled - nothing to register with");
 	}
+}
+
+sub shutdownPlugin {
+	Slim::Control::Request::unsubscribe(\&onNewSong);
 }
 
 sub getDisplayName { 'PLUGIN_DJ' }
@@ -238,7 +245,7 @@ sub trackInfoReason {
 	};
 }
 
-# Track info folder with the artist's upcoming concerts in Europe. Built synchronously, so it
+# Track info folder with the artist's upcoming concerts in the listener's region. Built synchronously, so it
 # shows what's cached and starts a lookup for next time if nothing is.
 sub trackInfoConcerts {
 	my ($client, $url, $track, $remoteMeta) = @_;
@@ -252,7 +259,7 @@ sub trackInfoConcerts {
 	return unless @$concerts;
 
 	return {
-		name  => cstring($client, 'PLUGIN_DJ_CONCERTS_IN_EUROPE', scalar @$concerts),
+		name  => cstring($client, 'PLUGIN_DJ_CONCERTS_COUNT', scalar @$concerts),
 		items => [ map { { name => _concertLine($client, $_), type => 'text' } } @$concerts ],
 	};
 }
@@ -300,6 +307,7 @@ sub upcomingConcerts {
 sub whyThisTrack {
 	my ($client, $cb) = @_;
 
+	return _noPlayer($cb) unless $client;
 	$client = $client->master;
 
 	my $answer = sub {
@@ -345,6 +353,7 @@ sub whyThisTrack {
 sub startDj {
 	my ($client, $cb) = @_;
 
+	return _noPlayer($cb) unless $client;
 	$client = $client->master;
 
 	my @seeds = grep { defined } _trackId(Slim::Player::Playlist::song($client));
@@ -364,6 +373,7 @@ sub startDj {
 sub playMood {
 	my ($client, $cb, $args, $pass) = @_;
 
+	return _noPlayer($cb) unless $client;
 	$client = $client->master;
 
 	my $text = $pass && $pass->{text};
@@ -391,6 +401,7 @@ sub playMood {
 sub clearMood {
 	my ($client, $cb) = @_;
 
+	return _noPlayer($cb) unless $client;
 	$client = $client->master;
 
 	my $reply = sub {
@@ -650,6 +661,13 @@ sub _trackId {
 
 	my $id = blessed($track) ? $track->id : undef;
 	return defined $id && $id =~ /^-?\d+$/ && $id != 0 ? $id : undef;
+}
+
+# Menus opened without a player (e.g. a web page with none connected) can't play anything
+sub _noPlayer {
+	my ($cb) = @_;
+	$cb->({ items => [{ name => cstring(undef, 'PLUGIN_DJ_NO_PLAYER'), type => 'text' }] });
+	return;
 }
 
 sub _dstmEnabled {
