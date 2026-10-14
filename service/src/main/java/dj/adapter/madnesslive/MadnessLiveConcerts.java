@@ -3,21 +3,18 @@ package dj.adapter.madnesslive;
 import dj.domain.model.ArtistNames;
 import dj.domain.model.Concert;
 import dj.domain.model.ConcertProvider;
+import dj.adapter.web.Crawled;
+import dj.adapter.web.Html;
+import dj.adapter.web.PoliteHttp;
 import dj.domain.port.ConcertSource;
 
-import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
 import java.net.URI;
 import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.text.Normalizer;
 import java.time.Clock;
 import java.time.DateTimeException;
 import java.time.Duration;
-import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -46,12 +43,6 @@ public class MadnessLiveConcerts implements ConcertSource {
 
     private static final Logger LOG = System.getLogger(MadnessLiveConcerts.class.getName());
     private static final int MAX_LISTING_PAGES = 10;
-    private static final Duration RETRY_AFTER = Duration.ofMinutes(10);
-    private static final Pattern NUMERIC_ENTITY = Pattern.compile("&#(x?)([0-9a-fA-F]+);");
-    /** "&oacute;" → "ó", "&Aring;" → "Å": accented letters as named entities. */
-    private static final Pattern LETTER_ENTITY = Pattern.compile("&([A-Za-z])(acute|grave|circ|tilde|uml|ring|cedil);");
-    private static final Map<String, String> COMBINING = Map.of("acute", "\u0301", "grave", "\u0300",
-            "circ", "\u0302", "tilde", "\u0303", "uml", "\u0308", "ring", "\u030A", "cedil", "\u0327");
     private static final Pattern NEXT_PAGE = Pattern.compile("<a[^>]*rel=\"next\"[^>]*href=\"([^\"]+)\"|"
             + "<a[^>]*href=\"([^\"]+)\"[^>]*rel=\"next\"");
     private static final Pattern TITLE = Pattern.compile("class=\"h1 page-title\"><span>(.*?)</span>", Pattern.DOTALL);
@@ -76,31 +67,22 @@ public class MadnessLiveConcerts implements ConcertSource {
     record Show(Concert concert, Set<String> lineup) {
     }
 
-    private final HttpClient http;
+    private final PoliteHttp http;
     private final URI listing;
     /** Show pages: {@code <origin>/es/conciertos-en-barcelona/1998-comprar-entrada-amorphis-....html} */
     private final Pattern showLink;
-    private final Duration minInterval;
-    private final Duration maxAge;
-    private final Clock clock;
-    private List<Show> shows = List.of();
-    private Instant crawledAt;
-    private Instant retryAt = Instant.MIN;
-    private long nextRequestAt;
+    private final Crawled<List<Show>> catalogue;
 
     public MadnessLiveConcerts(Duration maxAge) {
-        this(HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).followRedirects(HttpClient.Redirect.NORMAL)
-                .build(), DEFAULT_LISTING, Duration.ofSeconds(1), maxAge, Clock.systemUTC());
+        this(PoliteHttp.defaultClient(), DEFAULT_LISTING, Duration.ofSeconds(1), maxAge, Clock.systemUTC());
     }
 
     MadnessLiveConcerts(HttpClient http, URI listing, Duration minInterval, Duration maxAge, Clock clock) {
-        this.http = http;
+        this.http = new PoliteHttp(http, "Madness Live", minInterval, clock);
         this.listing = listing;
         this.showLink = Pattern.compile("href=\"(" + Pattern.quote(listing.getScheme() + "://" + listing.getRawAuthority())
                 + "/[a-z]{2}/[^/\"]+/\\d+-[^/\"]+\\.html)\"");
-        this.minInterval = minInterval;
-        this.maxAge = maxAge;
-        this.clock = clock;
+        this.catalogue = new Crawled<>("Madness Live", this::crawl, maxAge, clock);
     }
 
     @Override
@@ -111,7 +93,7 @@ public class MadnessLiveConcerts implements ConcertSource {
     @Override
     public List<Concert> upcoming(String artistName) {
         String key = ArtistNames.key(artistName);
-        return catalogue().stream()
+        return catalogue.get().stream()
                 .filter(show -> show.lineup().contains(key))
                 .map(show -> {
                     Concert c = show.concert();
@@ -121,42 +103,12 @@ public class MadnessLiveConcerts implements ConcertSource {
                 .toList();
     }
 
-    /**
-     * The shows, crawled again if the last crawl is older than {@code maxAge}. A failed crawl
-     * keeps the last catalogue and isn't retried for {@link #RETRY_AFTER}, so a scan of many
-     * artists doesn't hammer a site that's down.
-     */
-    private synchronized List<Show> catalogue() {
-        Instant now = clock.instant();
-        if (crawledAt != null && crawledAt.isAfter(now.minus(maxAge))) {
-            return shows;
-        }
-        if (now.isBefore(retryAt)) {
-            if (crawledAt != null) {
-                return shows;
-            }
-            throw new IllegalStateException("Madness Live is unavailable; retrying after " + retryAt);
-        }
-        try {
-            shows = crawl();
-            crawledAt = clock.instant();
-            return shows;
-        } catch (RuntimeException e) {
-            retryAt = now.plus(RETRY_AFTER);
-            if (crawledAt != null) {
-                LOG.log(Level.WARNING, "Madness Live crawl failed; keeping the last one: " + e.getMessage());
-                return shows;
-            }
-            throw e;
-        }
-    }
-
     private List<Show> crawl() {
         List<Show> found = new ArrayList<>();
         int unreadable = 0;
         for (URI page : showPages()) {
             try {
-                Optional<Show> show = parseShow(get(page), page.toString());
+                Optional<Show> show = parseShow(http.get(page), page.toString());
                 if (show.isPresent()) {
                     found.add(show.get());
                 } else {
@@ -179,7 +131,7 @@ public class MadnessLiveConcerts implements ConcertSource {
         Set<URI> pages = new LinkedHashSet<>();
         URI page = listing;
         for (int i = 0; i < MAX_LISTING_PAGES && page != null; i++) {
-            String html = get(page);
+            String html = http.get(page);
             pages.addAll(parseShowLinks(html));
             page = nextPage(html).map(page::resolve).orElse(null);
         }
@@ -203,7 +155,7 @@ public class MadnessLiveConcerts implements ConcertSource {
         if (!m.find()) {
             return Optional.empty();
         }
-        return Optional.of(unescape(m.group(1) != null ? m.group(1) : m.group(2)));
+        return Optional.of(Html.unescape(m.group(1) != null ? m.group(1) : m.group(2)));
     }
 
     /** @return empty for a cancelled show, a page without a date, or one that isn't a show at all */
@@ -213,7 +165,7 @@ public class MadnessLiveConcerts implements ConcertSource {
         if (!title.find() || !description.find()) {
             return Optional.empty();
         }
-        String heading = text(title.group(1));
+        String heading = Html.text(title.group(1));
         if (CANCELLED.matcher(heading).find()) {
             return Optional.empty();
         }
@@ -239,8 +191,8 @@ public class MadnessLiveConcerts implements ConcertSource {
         }
         Matcher feature = FEATURE.matcher(html);
         while (feature.find()) {
-            if (text(feature.group(1)).equalsIgnoreCase("Banda")) {
-                lineup.add(ArtistNames.key(text(feature.group(2))));
+            if (Html.text(feature.group(1)).equalsIgnoreCase("Banda")) {
+                lineup.add(ArtistNames.key(Html.text(feature.group(2))));
             }
         }
         lineup.remove("");
@@ -271,56 +223,11 @@ public class MadnessLiveConcerts implements ConcertSource {
     private static List<String> lines(String html) {
         List<String> lines = new ArrayList<>();
         for (String line : html.split("(?i)<br\\s*/?>|</p>")) {
-            String t = text(line);
+            String t = Html.text(line);
             if (!t.isEmpty()) {
                 lines.add(t);
             }
         }
         return lines;
-    }
-
-    private static String text(String html) {
-        // \s and strip() don't count the no-break spaces the site pads names with
-        return unescape(html.replaceAll("<[^>]+>", "")).replace('\u00a0', ' ').replaceAll("\\s+", " ").strip();
-    }
-
-    private static String unescape(String s) {
-        s = NUMERIC_ENTITY.matcher(s).replaceAll(m ->
-                Matcher.quoteReplacement(Character.toString(Integer.parseInt(m.group(2), m.group(1).isEmpty() ? 10 : 16))));
-        s = LETTER_ENTITY.matcher(s).replaceAll(m -> Matcher.quoteReplacement(
-                Normalizer.normalize(m.group(1) + COMBINING.get(m.group(2)), Normalizer.Form.NFC)));
-        return s.replace("&oslash;", "ø").replace("&Oslash;", "Ø").replace("&aelig;", "æ").replace("&AElig;", "Æ")
-                .replace("&szlig;", "ß").replace("&nbsp;", " ").replace("&amp;", "&").replace("&quot;", "\"").replace("&#039;", "'")
-                .replace("&#39;", "'").replace("&rsquo;", "’").replace("&lt;", "<").replace("&gt;", ">");
-    }
-
-    private String get(URI uri) {
-        HttpRequest request = HttpRequest.newBuilder(uri)
-                .timeout(Duration.ofSeconds(20))
-                .header("User-Agent", "dj (+https://github.com/geir-eilertsen/dj)")
-                .GET()
-                .build();
-        try {
-            pace();
-            HttpResponse<String> response = http.send(request, HttpResponse.BodyHandlers.ofString());
-            if (response.statusCode() != 200) {
-                throw new IllegalStateException("Madness Live " + uri.getPath() + " returned HTTP " + response.statusCode());
-            }
-            return response.body();
-        } catch (IOException e) {
-            throw new UncheckedIOException("Madness Live request for " + uri.getPath() + " failed", e);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new IllegalStateException("Interrupted", e);
-        }
-    }
-
-    private void pace() throws InterruptedException {
-        long now = clock.millis();
-        if (now < nextRequestAt) {
-            Thread.sleep(nextRequestAt - now);
-            now = nextRequestAt;
-        }
-        nextRequestAt = now + minInterval.toMillis();
     }
 }
