@@ -27,7 +27,7 @@ sha=$(sha1sum "$zip" | cut -d' ' -f1)
 
 gh release create "$tag" "$zip" --repo "$repo" --target "$(git rev-parse HEAD)" \
 	--title "DJ plugin $version" \
-	--notes "LMS plugin $version. Install it from the repository: see Getting started in the README."
+	--notes "${RELEASE_NOTES:-LMS plugin $version.} Install it from the repository: see Getting started in the README."
 
 # Only now, with the zip downloadable, does repo.xml point at it.
 cat > repo.xml <<XML
@@ -40,10 +40,10 @@ cat > repo.xml <<XML
 		<plugin name="DJ" version="$version" minTarget="8.0" maxTarget="*">
 			<title lang="EN">DJ (AI suggestions)</title>
 			<title lang="NO">DJ (AI-forslag)</title>
-			<desc lang="EN">AI DJ: Start DJ, moods in your own words and Don't Stop The Music suggestions, with a reason for every song, and upcoming concerts in Europe (Ticketmaster, Madness Live!) by the artists you play. Needs the dj service (Docker image geireilertsen/dj).</desc>
-			<desc lang="NO">AI-DJ: Start DJ, stemninger med egne ord og forslag til Ikke stopp musikken, med en begrunnelse for hver låt, og kommende konserter i Europa med artistene du spiller. Krever dj-tjenesten (Docker-bildet geireilertsen/dj).</desc>
+			<desc lang="EN">An AI DJ: Start DJ, moods in your own words ("mellow prog for Sunday morning") and Don't Stop The Music mixes that follow what you play, with a reason for every song, plus upcoming concerts by the artists you play. Note: not a click-and-done plugin. It needs the separate DJ service running in Docker (image geireilertsen/dj), and works best with free Last.fm and paid Anthropic (about $0.0005 a mix) API keys. Setup: see the link.</desc>
+			<desc lang="NO">En AI-DJ: Start DJ, stemninger med egne ord og Ikke stopp musikken-mikser som følger det du spiller, med en begrunnelse for hver låt, og kommende konserter med artistene du spiller. Merk: krever den separate DJ-tjenesten i Docker (bildet geireilertsen/dj), og virker best med API-nøkler fra Last.fm (gratis) og Anthropic (ca. $0.0005 per miks). Oppsett: se lenken.</desc>
 			<creator>Geir Eilertsen</creator>
-			<category>musicservices</category>
+			<category>playlists</category>
 			<link>https://github.com/$repo</link>
 			<icon>https://raw.githubusercontent.com/$repo/main/plugin/HTML/EN/plugins/DJ/html/images/icon.png</icon>
 			<url>https://github.com/$repo/releases/download/$tag/DJ-$version.zip</url>
