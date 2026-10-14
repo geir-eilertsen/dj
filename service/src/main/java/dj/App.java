@@ -15,6 +15,7 @@ import dj.adapter.sqlite.SqliteDiscoveryStore;
 import dj.adapter.sqlite.SqliteMoodStore;
 import dj.adapter.sqlite.SqlitePlayHistory;
 import dj.adapter.stub.NoLlm;
+import dj.adapter.folken.FolkenConcerts;
 import dj.adapter.madnesslive.MadnessLiveConcerts;
 import dj.adapter.ticketmaster.TicketmasterConcerts;
 import dj.adapter.stub.NoMoodInterpreter;
@@ -121,6 +122,7 @@ public final class App {
         config.ticketmasterApiKey().ifPresentOrElse(key -> concertProviders.add(new TicketmasterConcerts(key)),
                 () -> concertProviders.addUnavailable(TicketmasterConcerts.PROVIDER, "needs TICKETMASTER_API_KEY"));
         concertProviders.add(new MadnessLiveConcerts(config.concertMaxAge()));
+        concertProviders.add(new FolkenConcerts(config.concertMaxAge()));
         // Concert dates are in the venue's local time; "upcoming" is judged by the listener's date
         ConcertFinder concerts = new ConcertFinder(library, discovered, concertProviders, concertStore,
                 Clock.systemDefaultZone(), config.concertMaxAge(), config.concertCountries());

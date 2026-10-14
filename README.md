@@ -128,7 +128,7 @@ DJ sends no telemetry. What leaves your network, and only with that service's ke
 | Ticketmaster | Names of your artists, to look up concerts |
 | TIDAL (through LMS's TIDAL plugin) | Searches for songs to play, from your TIDAL account |
 
-Regional concert sources (Madness Live!) are only read (their public pages), and only if you
+Regional concert sources (Madness Live!, Folken) are only read (their public pages), and only if you
 tick them; nothing about you is sent.
 
 ## Troubleshooting
@@ -303,6 +303,10 @@ promoter that sells its own tickets, needs no key. It has no API: DJ reads its t
 a day (one page a second, about 80 pages) and finds an artist anywhere on a bill, support acts
 too. A site redesign would make it find nothing until the parser is updated; the last good
 catalogue is kept meanwhile. Festival passes are skipped (their line-ups aren't on the page).
+
+**Folken** ([folken.no](https://www.folken.no)), a club in Stavanger (Norway) that sells its own
+tickets, needs no key either. DJ reads its programme page once a day (one request) and finds an
+artist anywhere on a bill, support acts too. Dates without a year are taken as the coming one.
 
 ## LMS plugin
 

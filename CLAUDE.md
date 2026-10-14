@@ -88,6 +88,13 @@ Ports (`dj.domain.port`):
   "A + B + C (City)" = bill (artist matches anywhere on it), "Banda" feature = headliner, first line
   of the short description = Spanish date, second = venue; "CANCELADO:" skipped; no times (door times,
   mistyped). Failed crawl keeps the last catalogue, retries after 10 min. Off by default.
+  Adapter `FolkenConcerts` (folken.no, Stavanger club, tickets via Linticket, ~not on Ticketmaster): one
+  request, the front page's programme (`<li class="list-item" data-type='Konsert'>`: title, "6 November"
+  or "5 February 2027" (no year = this year unless over a month ago), time, show link); title = bill
+  ("A (S) + support: B", "Series #4: Act", " - UTSOLGT!" / "UTSOLGT!" stripped; acts also matched without
+  brackets, so "KARPE (DIEM) ..." is Karpe); "AVLYST"/"cancelled" skipped. Off by default. Linticket's
+  robots.txt blocks AI crawlers: don't scrape it. Crawlers share `dj.adapter.web` (`PoliteHttp`: pacing +
+  user agent; `Crawled`: once per max age, keep last on failure, retry after 10 min; `Html.text`).
   `ConcertProviders` (domain): every provider in priority order (Ticketmaster first), unavailable ones
   listed with a reason (no key), and the listener's ticks (`ConcertProviderChoices`; an unavailable
   provider keeps its choice).
@@ -193,8 +200,11 @@ service → `http://localhost:9000`).
 - **Done:** step 1 skeleton; step 2 Last.fm similarity + history scoring; Start DJ button +
   icon (`tools/Icon.java`); artist spreading/cap; song-version dedupe; following streamed
   music; TIDAL discovery (~40%); per-player time-of-day starts; skip penalties; Christmas filter;
-  concerts in Europe (Ticketmaster, Madness Live!).
+  concerts in Europe (Ticketmaster, Madness Live!, Folken; sources ticked in the plugin settings);
+  forgetting recent moods.
 - **Next ideas:** a "why this track?" endpoint showing score parts.
+- **Not possible (2026-10-14): Bandsintown.** Its API keys are per artist only (refused for us by
+  email); the site is behind a Cloudflare bot wall; its widget's `js_app_id` isn't ours to use.
 - **Dropped (user's decision, 2026-10-13): Spotify as a fallback catalogue.** Spotty has no
   search command; its menu search (`spotty items`, untyped) saves every query in the user's
   Spotify search history (`spotify_recent_search`, max 50; only typed searches skip it, and
