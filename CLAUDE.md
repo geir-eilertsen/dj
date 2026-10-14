@@ -76,17 +76,21 @@ Ports (`dj.domain.port`):
   Domain fallback `MoodKeywords` (known tags, library artists ≥4 chars, decades incl. "80-tallet").
 - `PlayerActivityPort`: what each player plays now, queue position, queue slices.
   Adapter `LmsPlayerActivity`.
-- `ConcertSource`: upcoming concerts. Adapter `TicketmasterConcerts` (Discovery API: `attractions.json`
+- `ConcertSource`: upcoming concerts from one provider, which describes itself (`ConcertProvider`: id, name,
+  coverage, `onByDefault`; regional ones are off by default so nobody crawls a site of no use to them).
+  Adding a provider = an adapter + one line in `App` (priority order). Adapter `TicketmasterConcerts` (Discovery API: `attractions.json`
   exact-name match, most upcoming events wins; then `events.json?attractionId=`, music only; skips
   cancelled, dateless and duplicate date+venue listings; 250 ms spacing; key never in messages).
   Adapter `MadnessLiveConcerts` (madnesslive.es, Spanish promoter, no API): crawls the PrestaShop
   listing `/es/12-entradas` (+ `rel=next`) and each show page, 1 req/s, once per max age; title
   "A + B + C (City)" = bill (artist matches anywhere on it), "Banda" feature = headliner, first line
   of the short description = Spanish date, second = venue; "CANCELADO:" skipped; no times (door times,
-  mistyped). Failed crawl keeps the last catalogue, retries after 10 min. `DJ_MADNESS_LIVE` (1).
-  `CombinedConcertSource` (domain) merges sources (Ticketmaster first), one show per date+city;
-  fails only if all fail.
-- `ConcertStore`: latest lookup per artist (empty ones too). Adapter `SqliteConcertStore` (`concerts.db`, in memory).
+  mistyped). Failed crawl keeps the last catalogue, retries after 10 min. Off by default.
+  `ConcertProviders` (domain): every provider in priority order (Ticketmaster first), unavailable ones
+  listed with a reason (no key), and the listener's ticks (`ConcertProviderChoices`; an unavailable
+  provider keeps its choice).
+- `ConcertStore`: latest lookup per artist **and provider** (empty ones too). Adapter `SqliteConcertStore`
+  (`concerts.db`, schema v3, in memory; also implements `ConcertProviderChoices`).
 - `SimilarityPort`: acoustic neighbours. Stub (`NoSimilarity`); Bliss can't analyse streams.
 - `LlmPort`: picks and orders candidates given a `MixBrief` (context, fresh, mood), returning
   `Pick(id, reason)`. Adapter `ClaudeLlm`
@@ -131,29 +135,36 @@ then `Discoverer.discoverAll` (top 5 songs not in the library per library/listen
 top 3 for each one's 3 closest similar artists not in the library; skips namesakes whose
 online top 20 contains none of ≥2 library songs; aborts after 5 failures in a row).
 
-Concerts (`ConcertFinder`, off the mix path): stores every country, shows only `DJ_CONCERT_COUNTRIES`
+Concerts (`ConcertFinder`, off the mix path): asks each enabled provider separately and merges on read
+(one show per date+city, the first provider's listing), so unticking hides a provider's shows at once and
+ticking one asks only that one; a failing provider falls back to its last lookup. Stores every country, shows only `DJ_CONCERT_COUNTRIES`
 (default `europe` = `ConcertFinder.EUROPE`; ISO codes, `europe`, or `all`), filtered on read so a change
 needs no lookups, and dates from today (listener's zone); "X feat. Y" is looked up as X. `forArtist` uses a lookup up to
 `DJ_CONCERT_MAX_AGE_HOURS` old, else asks (falls back to the stale one on failure). `scanAll` (2 min after
-start, then every max age) refreshes library artists by play count, then listened artists, older than
-half the max age; aborts after 5 failures in a row. Plugin: track info folder "Upcoming concerts (N)"
+start, every max age, and right after the ticks change) refreshes library artists by play count, then
+listened artists, per provider where older than half the max age; a provider failing 5 times in a row
+is skipped for the rest of that scan (`gaveUp`). Plugin: track info folder "Upcoming concerts (N)"
 (cache only; a miss starts a lookup), Material pop-up on `newsong` merged with the reason (next 3,
 once per artist per player per 12 h), DJ menu "Upcoming concerts" (fixed item 4). Plugin caches
-concerts 12 h in the `dj` cache (`concerts:<lc artist>`; failures 10 min).
+concerts 12 h in the `dj` cache (`concerts:<generation>:<lc artist>`; failures 10 min); settings page
+"Concert sources" ticks come from and go to `/concerts/providers` (async `Settings::handler`), and a save
+bumps the `concert_generation` pref so cached concerts are forgotten.
 
 HTTP API (`dj.adapter.http`): `GET /mix?player=<mac>&seed=<id,id,..>&count=<n>&fresh=1` →
 `{"source","tracks":[{"id","url","title","artist","album","reason"?}]}`;
 `GET /why?player=&url=` (404 if DJ gave no reason); `GET /mood?player=` →
 `{"current","recent"}`; `POST /mood` (`player`, `text`; query or form) → the understood mood;
 `POST /mood/clear?player=`; `GET /concerts?artist=` → `{"artist","concerts":[{date,time?,title,venue,city,country,url?}]}`
-(504 after `DJ_CONCERT_LOOKUP_MS`, 404 without a key); `GET /concerts` → `{"artists":[{artist,concerts}]}`; `GET /health`; `GET /status`.
+(504 after `DJ_CONCERT_LOOKUP_MS`); `GET /concerts` → `{"artists":[{artist,concerts}]}`;
+`GET /concerts/providers` → `{"providers":[{id,name,coverage,enabled,unavailable?}]}`;
+`POST /concerts/providers` (`enabled=id,id`, may be empty) → the same; `GET /health`; `GET /status`.
 
 Config via env vars: `LMS_URL` (`http://localhost:9000`), `DJ_PORT` (9010),
 `DJ_CANDIDATES` (50), `DJ_LLM_TIMEOUT_MS` (3000), `DJ_LIBRARY_TTL_MINUTES` (15),
 `DJ_DATA_DIR` (`data`; `/data` in Docker, volume `dj-data`), `LASTFM_API_KEY` (`.env`, never
 logged), `DJ_ENRICH_INTERVAL_HOURS` (24), `DJ_ARTIST_MAX_AGE_DAYS` (30),
 `DJ_SEED_LOOKUP_MS` (1500), `DJ_DISCOVERY_SHARE` (0.4; 0 disables discovery),
-`TICKETMASTER_API_KEY` (`.env`), `DJ_MADNESS_LIVE` (1), `DJ_CONCERT_COUNTRIES` (`europe`), `DJ_CONCERT_LOOKUP_MS` (4000), `DJ_CONCERT_MAX_AGE_HOURS` (24),
+`TICKETMASTER_API_KEY` (`.env`), `DJ_CONCERT_COUNTRIES` (`europe`), `DJ_CONCERT_LOOKUP_MS` (4000), `DJ_CONCERT_MAX_AGE_HOURS` (24),
 `ANTHROPIC_API_KEY` (`.env`; must be a **workspace-scoped** key, an unscoped one gets 400),
 `DJ_LLM_MODEL` (`claude-haiku-5-5`), `DJ_LLM_LANGUAGE` (English), `DJ_LLM_TIMEOUT_MS` (5000).
 Plugin timeout default 10 s (prefs migration 1 raised saved 5 s values).

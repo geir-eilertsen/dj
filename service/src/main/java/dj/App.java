@@ -21,8 +21,8 @@ import dj.adapter.stub.NoMoodInterpreter;
 import dj.adapter.stub.NoSimilarity;
 import dj.domain.ArtistEnricher;
 import dj.domain.CandidateScorer;
-import dj.domain.CombinedConcertSource;
 import dj.domain.ConcertFinder;
+import dj.domain.ConcertProviders;
 import dj.domain.Discoverer;
 import dj.domain.HistoryRecorder;
 import dj.domain.MixService;
@@ -31,7 +31,6 @@ import dj.domain.MoodService;
 import dj.domain.ScoringWeights;
 import dj.domain.SkipPenalties;
 import dj.domain.TimeOfDaySeeds;
-import dj.domain.port.ConcertSource;
 import dj.domain.port.LlmPort;
 import dj.domain.port.MoodInterpreter;
 
@@ -41,9 +40,7 @@ import java.lang.System.Logger.Level;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Random;
@@ -117,21 +114,28 @@ public final class App {
                 new MixSettings(config.candidatePoolSize(), config.llmTimeout(), config.seedLookupTimeout(),
                         config.discoveryShare()));
 
-        // Ticketmaster first: a show both sell is kept as Ticketmaster lists it
-        List<ConcertSource> concertSources = new ArrayList<>();
-        config.ticketmasterApiKey().ifPresent(key -> concertSources.add(new TicketmasterConcerts(key)));
-        if (config.madnessLive()) {
-            concertSources.add(new MadnessLiveConcerts(config.concertMaxAge()));
-        }
+        // In priority order: a show two of them sell is kept as the first lists it. Which ones are
+        // asked is the listener's choice (plugin settings), stored with the lookups.
+        SqliteConcertStore concertStore = new SqliteConcertStore(config.dataDir().resolve("concerts.db"));
+        ConcertProviders concertProviders = new ConcertProviders(concertStore);
+        config.ticketmasterApiKey().ifPresentOrElse(key -> concertProviders.add(new TicketmasterConcerts(key)),
+                () -> concertProviders.addUnavailable(TicketmasterConcerts.PROVIDER, "needs TICKETMASTER_API_KEY"));
+        concertProviders.add(new MadnessLiveConcerts(config.concertMaxAge()));
         // Concert dates are in the venue's local time; "upcoming" is judged by the listener's date
-        Optional<ConcertFinder> concerts = concertSources.isEmpty() ? Optional.empty() : Optional.of(new ConcertFinder(
-                library, discovered, new CombinedConcertSource(concertSources),
-                new SqliteConcertStore(config.dataDir().resolve("concerts.db")), Clock.systemDefaultZone(),
-                config.concertMaxAge(), config.concertCountries()));
+        ConcertFinder concerts = new ConcertFinder(library, discovered, concertProviders, concertStore,
+                Clock.systemDefaultZone(), config.concertMaxAge(), config.concertCountries());
 
         AtomicReference<ArtistEnricher.Result> lastEnrichment = new AtomicReference<>();
         AtomicReference<Discoverer.Result> lastDiscovery = new AtomicReference<>();
         AtomicReference<ConcertFinder.Result> lastConcertScan = new AtomicReference<>();
+        ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(3);
+        Runnable concertScan = () -> {
+            try {
+                lastConcertScan.set(concerts.scanAll());
+            } catch (RuntimeException e) {
+                LOG.log(Level.WARNING, "Concert scan failed", e);
+            }
+        };
         MixHttpServer server = new MixHttpServer(mixService, history, moods, config.port(), () -> {
             Map<String, Object> status = new LinkedHashMap<>();
             status.put("artistProfiles", profiles.size());
@@ -141,13 +145,14 @@ public final class App {
             status.put("discoveredTracks", discovered.allTracks().size());
             status.put("listenedArtists", discovered.listenedArtists().size());
             status.put("lastDiscovery", lastDiscovery.get());
-            status.put("concerts", config.concertSources());
+            status.put("concerts", concertProviders.enabled().stream().map(s -> s.provider().name()).toList());
             status.put("concertRegion", config.concertRegion());
-            status.put("artistsWithConcerts", concerts.map(c -> c.upcoming().size()).orElse(null));
+            status.put("artistsWithConcerts", concerts.upcoming().size());
             status.put("lastConcertScan", lastConcertScan.get());
             return status;
         });
-        concerts.ifPresent(c -> server.enableConcerts(c, config.concertLookupTimeout()));
+        // A provider just turned on fills in at once rather than at the next daily scan
+        server.enableConcerts(concerts, config.concertLookupTimeout(), () -> scheduler.execute(concertScan));
         server.start();
 
         // Warm the library snapshot so the first DSTM request doesn't pay for it.
@@ -159,7 +164,6 @@ public final class App {
             }
         });
 
-        ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(3);
         scheduler.scheduleWithFixedDelay(recorder::poll, 15, 10, TimeUnit.SECONDS);
         if (enricher.isPresent()) {
             scheduler.scheduleWithFixedDelay(() -> {
@@ -180,18 +184,8 @@ public final class App {
             LOG.log(Level.WARNING, "LASTFM_API_KEY not set: no artist similarity, mixes use play counts and years only");
         }
 
-        if (concerts.isPresent()) {
-            // After the library has loaded; independent of Last.fm
-            scheduler.scheduleWithFixedDelay(() -> {
-                try {
-                    lastConcertScan.set(concerts.get().scanAll());
-                } catch (RuntimeException e) {
-                    LOG.log(Level.WARNING, "Concert scan failed", e);
-                }
-            }, 120, config.concertMaxAge().toSeconds(), TimeUnit.SECONDS);
-        } else {
-            LOG.log(Level.INFO, "No concert sources (TICKETMASTER_API_KEY not set, DJ_MADNESS_LIVE off)");
-        }
+        // After the library has loaded; independent of Last.fm
+        scheduler.scheduleWithFixedDelay(concertScan, 120, config.concertMaxAge().toSeconds(), TimeUnit.SECONDS);
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             server.stop();

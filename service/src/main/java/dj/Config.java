@@ -5,8 +5,6 @@ import dj.domain.ConcertFinder;
 import java.net.URI;
 import java.nio.file.Path;
 import java.time.Duration;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -16,7 +14,7 @@ record Config(URI lmsUrl, int port, int candidatePoolSize, Duration llmTimeout, 
               Path dataDir, Optional<String> lastFmApiKey, Duration enrichmentInterval, Duration artistMaxAge,
               Duration seedLookupTimeout, double discoveryShare,
               Optional<String> anthropicApiKey, String llmModel, String llmLanguage,
-              Optional<String> ticketmasterApiKey, boolean madnessLive, Duration concertLookupTimeout,
+              Optional<String> ticketmasterApiKey, Duration concertLookupTimeout,
               Duration concertMaxAge, Set<String> concertCountries) {
 
     static Config fromEnv(Map<String, String> env) {
@@ -36,19 +34,9 @@ record Config(URI lmsUrl, int port, int candidatePoolSize, Duration llmTimeout, 
                 env.getOrDefault("DJ_LLM_MODEL", "claude-haiku-5-5"),
                 env.getOrDefault("DJ_LLM_LANGUAGE", "English"),
                 Optional.ofNullable(env.get("TICKETMASTER_API_KEY")).map(String::strip).filter(k -> !k.isEmpty()),
-                !Set.of("0", "false", "no", "off").contains(env.getOrDefault("DJ_MADNESS_LIVE", "1").strip().toLowerCase()),
                 Duration.ofMillis(Long.parseLong(env.getOrDefault("DJ_CONCERT_LOOKUP_MS", "4000"))),
                 Duration.ofHours(Long.parseLong(env.getOrDefault("DJ_CONCERT_MAX_AGE_HOURS", "24"))),
                 ConcertFinder.countries(env.getOrDefault("DJ_CONCERT_COUNTRIES", "europe")));
-    }
-
-    List<String> concertSources() {
-        List<String> sources = new ArrayList<>();
-        ticketmasterApiKey.ifPresent(k -> sources.add("Ticketmaster"));
-        if (madnessLive) {
-            sources.add("Madness Live");
-        }
-        return sources;
     }
 
     /** "all", "europe" or the country codes. */
@@ -68,7 +56,8 @@ record Config(URI lmsUrl, int port, int candidatePoolSize, Duration llmTimeout, 
                 + ", enrichmentInterval=" + enrichmentInterval + ", artistMaxAge=" + artistMaxAge
                 + ", seedLookupTimeout=" + seedLookupTimeout + ", discoveryShare=" + discoveryShare
                 + ", llm=" + (anthropicApiKey.isPresent() ? llmModel + " (" + llmLanguage + ")" : "not configured")
-                + ", concerts=" + concertSources() + " in " + concertRegion()
+                + ", ticketmaster=" + (ticketmasterApiKey.isPresent() ? "configured" : "not configured")
+                + ", concertRegion=" + concertRegion()
                 + ", concertLookupTimeout=" + concertLookupTimeout + ", concertMaxAge=" + concertMaxAge + "]";
     }
 }

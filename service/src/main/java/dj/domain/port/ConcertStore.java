@@ -1,17 +1,17 @@
 package dj.domain.port;
 
-import dj.domain.model.ArtistConcerts;
+import dj.domain.model.ConcertLookup;
 
 import java.util.List;
 import java.util.Optional;
 
-/** The latest concert lookup per artist (matched with {@code ArtistNames.key}). */
+/** The latest concert lookup per artist (matched with {@code ArtistNames.key}) and provider. */
 public interface ConcertStore {
 
-    Optional<ArtistConcerts> get(String artist);
+    Optional<ConcertLookup> get(String artist, String provider);
 
-    /** Replaces what is known about this artist's concerts. */
-    void save(ArtistConcerts concerts);
+    /** Replaces what this provider knew about this artist's concerts. */
+    void save(ConcertLookup lookup);
 
-    List<ArtistConcerts> all();
+    List<ConcertLookup> all();
 }

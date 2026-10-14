@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import dj.domain.ConcertFinder;
+import dj.domain.ConcertProviders;
 import dj.domain.MixService;
 import dj.domain.MoodService;
 import dj.domain.model.ArtistConcerts;
@@ -28,9 +29,11 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -50,6 +53,9 @@ import java.util.function.Supplier;
  *   <li>{@code GET /why?player=<id>&url=<track url>}: why DJ suggested that track to that player</li>
  *   <li>{@code GET /concerts?artist=<name>}: that artist's upcoming concerts in the chosen countries (looked up if need be)</li>
  *   <li>{@code GET /concerts}: every known artist with upcoming concerts in the chosen countries</li>
+ *   <li>{@code GET /concerts/providers}: every concert provider and whether it's on</li>
+ *   <li>{@code POST /concerts/providers} with {@code enabled=<id,id,...>} (query or form body): turns
+ *       those on and the others off</li>
  *   <li>{@code GET /health}</li>
  *   <li>{@code GET /status}: diagnostics from the {@code status} supplier</li>
  * </ul>
@@ -68,6 +74,7 @@ public class MixHttpServer {
     private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
     private volatile ConcertFinder concerts;
     private volatile Duration concertLookupTimeout;
+    private volatile Runnable onProvidersChanged;
 
     public MixHttpServer(MixService mixService, FeedbackStore feedback, MoodService moods, int port,
                          Supplier<Map<String, Object>> status) throws IOException {
@@ -81,13 +88,19 @@ public class MixHttpServer {
         server.createContext("/mood", this::handleMood);
         server.createContext("/mood/clear", this::handleClearMood);
         server.createContext("/concerts", this::handleConcerts);
+        server.createContext("/concerts/providers", this::handleConcertProviders);
         server.createContext("/health", exchange -> respond(exchange, 200, Map.of("status", "ok")));
         server.createContext("/status", exchange -> respond(exchange, 200, status.get()));
     }
 
-    /** Answers {@code /concerts}; without this it says concerts aren't set up. */
-    public void enableConcerts(ConcertFinder finder, Duration lookupTimeout) {
+    /**
+     * Answers {@code /concerts}; without this it says concerts aren't set up.
+     *
+     * @param onProvidersChanged run after the listener changes which providers are on
+     */
+    public void enableConcerts(ConcertFinder finder, Duration lookupTimeout, Runnable onProvidersChanged) {
         this.concertLookupTimeout = lookupTimeout;
+        this.onProvidersChanged = onProvidersChanged;
         this.concerts = finder;
     }
 
@@ -160,7 +173,7 @@ public class MixHttpServer {
         }
         ConcertFinder finder = concerts;
         if (finder == null) {
-            respond(exchange, 404, Map.of("error", "concerts are not set up (no TICKETMASTER_API_KEY and DJ_MADNESS_LIVE off)"));
+            respond(exchange, 404, Map.of("error", "concerts are not set up"));
             return;
         }
         String artist = first(queryParams(exchange.getRequestURI().getRawQuery()), "artist");
@@ -181,6 +194,45 @@ public class MixHttpServer {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             respond(exchange, 503, Map.of("error", "interrupted"));
+        }
+    }
+
+    private void handleConcertProviders(HttpExchange exchange) throws IOException {
+        String method = exchange.getRequestMethod();
+        if (!"GET".equals(method) && !"POST".equals(method)) {
+            respond(exchange, 405, Map.of("error", "GET or POST only"));
+            return;
+        }
+        ConcertFinder finder = concerts;
+        if (finder == null) {
+            respond(exchange, 404, Map.of("error", "concerts are not set up"));
+            return;
+        }
+        ConcertProviders providers = finder.providers();
+        try {
+            if ("POST".equals(method)) {
+                List<String> enabled = params(exchange).get("enabled");
+                if (enabled == null) {
+                    respond(exchange, 400, Map.of("error", "missing 'enabled' (comma-separated provider ids, may be empty)"));
+                    return;
+                }
+                Set<String> ids = new LinkedHashSet<>();
+                for (String value : enabled) {
+                    Arrays.stream(value.split(",")).map(String::strip).filter(id -> !id.isEmpty()).forEach(ids::add);
+                }
+                providers.choose(ids);
+                LOG.log(Level.INFO, "Concert providers on: {0}", ids);
+                Runnable changed = onProvidersChanged;
+                if (changed != null) {
+                    changed.run();
+                }
+            }
+            respond(exchange, 200, Map.of("providers", providers.all().stream().map(ProviderJson::from).toList()));
+        } catch (IllegalArgumentException e) {
+            respond(exchange, 400, Map.of("error", e.getMessage()));
+        } catch (RuntimeException e) {
+            LOG.log(Level.ERROR, "Concert provider request failed", e);
+            respond(exchange, 500, Map.of("error", "internal error"));
         }
     }
 
@@ -328,6 +380,16 @@ public class MixHttpServer {
 
         static ArtistConcertsJson from(ArtistConcerts a) {
             return new ArtistConcertsJson(a.artist(), a.concerts().stream().map(ConcertJson::from).toList());
+        }
+    }
+
+    /** {@code unavailable}: why it can't be asked, if it can't. */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    record ProviderJson(String id, String name, String coverage, boolean enabled, String unavailable) {
+
+        static ProviderJson from(ConcertProviders.Status s) {
+            return new ProviderJson(s.provider().id(), s.provider().name(), s.provider().coverage(), s.enabled(),
+                    s.available() ? null : s.unavailable());
         }
     }
 

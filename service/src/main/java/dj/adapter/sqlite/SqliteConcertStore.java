@@ -1,8 +1,9 @@
 package dj.adapter.sqlite;
 
-import dj.domain.model.ArtistConcerts;
 import dj.domain.model.ArtistNames;
 import dj.domain.model.Concert;
+import dj.domain.model.ConcertLookup;
+import dj.domain.port.ConcertProviderChoices;
 import dj.domain.port.ConcertStore;
 
 import java.nio.file.Files;
@@ -24,14 +25,19 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
-/** Concert lookups in a local SQLite database, mirrored in memory. */
-public class SqliteConcertStore implements ConcertStore {
+/** Concert lookups and the listener's choice of providers in a local SQLite database, mirrored in memory. */
+public class SqliteConcertStore implements ConcertStore, ConcertProviderChoices {
 
-    /** 2: lookups made before Madness Live was a source are dropped, so the next scan asks again. */
-    private static final int SCHEMA_VERSION = 2;
+    /**
+     * 2: lookups made before Madness Live was a source are dropped, so the next scan asks again.
+     * 3: lookups are per provider; the merged ones are dropped.
+     */
+    private static final int SCHEMA_VERSION = 3;
 
     private final String url;
-    private final Map<String, ArtistConcerts> byArtist = new ConcurrentHashMap<>();
+    /** {@code <artist key>|<provider>} → lookup */
+    private final Map<String, ConcertLookup> lookups = new ConcurrentHashMap<>();
+    private volatile Map<String, Boolean> choices = Map.of();
 
     public SqliteConcertStore(Path dbFile) {
         try {
@@ -50,51 +56,56 @@ public class SqliteConcertStore implements ConcertStore {
     }
 
     @Override
-    public Optional<ArtistConcerts> get(String artist) {
-        return Optional.ofNullable(byArtist.get(ArtistNames.key(artist)));
+    public Optional<ConcertLookup> get(String artist, String provider) {
+        return Optional.ofNullable(lookups.get(key(ArtistNames.key(artist), provider)));
     }
 
     @Override
-    public List<ArtistConcerts> all() {
-        return List.copyOf(byArtist.values());
+    public List<ConcertLookup> all() {
+        return List.copyOf(lookups.values());
     }
 
     @Override
-    public synchronized void save(ArtistConcerts concerts) {
-        String key = ArtistNames.key(concerts.artist());
+    public synchronized void save(ConcertLookup lookup) {
+        String artistKey = ArtistNames.key(lookup.artist());
         try (Connection db = DriverManager.getConnection(url)) {
             db.setAutoCommit(false);
             try {
                 try (PreparedStatement upsert = db.prepareStatement(
-                        "INSERT INTO concert_artist (key, name, checked_at) VALUES (?, ?, ?) "
-                                + "ON CONFLICT (key) DO UPDATE SET name = excluded.name, checked_at = excluded.checked_at")) {
-                    upsert.setString(1, key);
-                    upsert.setString(2, concerts.artist());
-                    upsert.setLong(3, concerts.checkedAt().toEpochMilli());
+                        "INSERT INTO concert_lookup (artist_key, provider, name, checked_at) VALUES (?, ?, ?, ?) "
+                                + "ON CONFLICT (artist_key, provider) DO UPDATE SET name = excluded.name, "
+                                + "checked_at = excluded.checked_at")) {
+                    upsert.setString(1, artistKey);
+                    upsert.setString(2, lookup.provider());
+                    upsert.setString(3, lookup.artist());
+                    upsert.setLong(4, lookup.checkedAt().toEpochMilli());
                     upsert.executeUpdate();
                 }
-                try (PreparedStatement delete = db.prepareStatement("DELETE FROM concert WHERE artist_key = ?")) {
-                    delete.setString(1, key);
+                try (PreparedStatement delete = db.prepareStatement(
+                        "DELETE FROM concert WHERE artist_key = ? AND provider = ?")) {
+                    delete.setString(1, artistKey);
+                    delete.setString(2, lookup.provider());
                     delete.executeUpdate();
                 }
                 try (PreparedStatement insert = db.prepareStatement(
-                        "INSERT INTO concert (artist_key, position, title, date, time, venue, city, country, url) "
-                                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")) {
+                        "INSERT INTO concert (artist_key, provider, position, title, date, time, venue, city, country, url) "
+                                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")) {
                     int position = 0;
-                    for (Concert c : concerts.concerts()) {
-                        insert.setString(1, key);
-                        insert.setInt(2, position++);
-                        insert.setString(3, c.title());
-                        insert.setString(4, c.date().toString());
+                    for (Concert c : lookup.concerts()) {
+                        insert.setString(1, artistKey);
+                        insert.setString(2, lookup.provider());
+                        insert.setInt(3, position++);
+                        insert.setString(4, c.title());
+                        insert.setString(5, c.date().toString());
                         if (c.time() == null) {
-                            insert.setNull(5, Types.VARCHAR);
+                            insert.setNull(6, Types.VARCHAR);
                         } else {
-                            insert.setString(5, c.time().toString());
+                            insert.setString(6, c.time().toString());
                         }
-                        insert.setString(6, c.venue());
-                        insert.setString(7, c.city());
-                        insert.setString(8, c.countryCode());
-                        insert.setString(9, c.url());
+                        insert.setString(7, c.venue());
+                        insert.setString(8, c.city());
+                        insert.setString(9, c.countryCode());
+                        insert.setString(10, c.url());
                         insert.addBatch();
                     }
                     insert.executeBatch();
@@ -105,9 +116,46 @@ public class SqliteConcertStore implements ConcertStore {
                 throw e;
             }
         } catch (SQLException e) {
-            throw new IllegalStateException("Could not save concerts for " + concerts.artist(), e);
+            throw new IllegalStateException("Could not save concerts for " + lookup.artist(), e);
         }
-        byArtist.put(key, concerts);
+        lookups.put(key(artistKey, lookup.provider()), lookup);
+    }
+
+    @Override
+    public Map<String, Boolean> choices() {
+        return choices;
+    }
+
+    @Override
+    public synchronized void save(Map<String, Boolean> choices) {
+        try (Connection db = DriverManager.getConnection(url)) {
+            db.setAutoCommit(false);
+            try {
+                try (Statement st = db.createStatement()) {
+                    st.executeUpdate("DELETE FROM concert_provider_choice");
+                }
+                try (PreparedStatement insert = db.prepareStatement(
+                        "INSERT INTO concert_provider_choice (provider, enabled) VALUES (?, ?)")) {
+                    for (Map.Entry<String, Boolean> choice : choices.entrySet()) {
+                        insert.setString(1, choice.getKey());
+                        insert.setInt(2, choice.getValue() ? 1 : 0);
+                        insert.addBatch();
+                    }
+                    insert.executeBatch();
+                }
+                db.commit();
+            } catch (SQLException e) {
+                db.rollback();
+                throw e;
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Could not save the choice of concert providers", e);
+        }
+        this.choices = Map.copyOf(choices);
+    }
+
+    private static String key(String artistKey, String provider) {
+        return artistKey + "|" + provider;
     }
 
     private static void migrate(Connection db) throws SQLException {
@@ -119,15 +167,20 @@ public class SqliteConcertStore implements ConcertStore {
             if (version >= SCHEMA_VERSION) {
                 return;
             }
+            st.executeUpdate("DROP TABLE IF EXISTS concert");
+            st.executeUpdate("DROP TABLE IF EXISTS concert_artist");
             st.executeUpdate("""
-                    CREATE TABLE IF NOT EXISTS concert_artist (
-                        key        TEXT PRIMARY KEY,
+                    CREATE TABLE concert_lookup (
+                        artist_key TEXT NOT NULL,
+                        provider   TEXT NOT NULL,
                         name       TEXT NOT NULL,
-                        checked_at INTEGER NOT NULL
+                        checked_at INTEGER NOT NULL,
+                        PRIMARY KEY (artist_key, provider)
                     )""");
             st.executeUpdate("""
-                    CREATE TABLE IF NOT EXISTS concert (
-                        artist_key TEXT NOT NULL REFERENCES concert_artist (key),
+                    CREATE TABLE concert (
+                        artist_key TEXT NOT NULL,
+                        provider   TEXT NOT NULL,
                         position   INTEGER NOT NULL,
                         title      TEXT NOT NULL,
                         date       TEXT NOT NULL,
@@ -136,12 +189,14 @@ public class SqliteConcertStore implements ConcertStore {
                         city       TEXT NOT NULL,
                         country    TEXT NOT NULL,
                         url        TEXT NOT NULL,
-                        PRIMARY KEY (artist_key, position)
+                        PRIMARY KEY (artist_key, provider, position),
+                        FOREIGN KEY (artist_key, provider) REFERENCES concert_lookup (artist_key, provider)
                     )""");
-            if (version == 1) {
-                st.executeUpdate("DELETE FROM concert");
-                st.executeUpdate("DELETE FROM concert_artist");
-            }
+            st.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS concert_provider_choice (
+                        provider TEXT PRIMARY KEY,
+                        enabled  INTEGER NOT NULL
+                    )""");
             st.executeUpdate("PRAGMA user_version = " + SCHEMA_VERSION);
         }
     }
@@ -150,21 +205,31 @@ public class SqliteConcertStore implements ConcertStore {
         Map<String, List<Concert>> concerts = new HashMap<>();
         try (Statement st = db.createStatement()) {
             try (ResultSet rs = st.executeQuery(
-                    "SELECT a.key, a.name, c.title, c.date, c.time, c.venue, c.city, c.country, c.url "
-                            + "FROM concert c JOIN concert_artist a ON a.key = c.artist_key ORDER BY c.artist_key, c.position")) {
+                    "SELECT l.artist_key, l.provider, l.name, c.title, c.date, c.time, c.venue, c.city, c.country, c.url "
+                            + "FROM concert c JOIN concert_lookup l ON l.artist_key = c.artist_key AND l.provider = c.provider "
+                            + "ORDER BY c.artist_key, c.provider, c.position")) {
                 while (rs.next()) {
-                    String time = rs.getString(5);
-                    concerts.computeIfAbsent(rs.getString(1), k -> new ArrayList<>()).add(new Concert(rs.getString(2),
-                            rs.getString(3), LocalDate.parse(rs.getString(4)), time == null ? null : LocalTime.parse(time),
-                            rs.getString(6), rs.getString(7), rs.getString(8), rs.getString(9)));
+                    String time = rs.getString(6);
+                    concerts.computeIfAbsent(key(rs.getString(1), rs.getString(2)), k -> new ArrayList<>()).add(
+                            new Concert(rs.getString(3), rs.getString(4), LocalDate.parse(rs.getString(5)),
+                                    time == null ? null : LocalTime.parse(time), rs.getString(7), rs.getString(8),
+                                    rs.getString(9), rs.getString(10)));
                 }
             }
-            try (ResultSet rs = st.executeQuery("SELECT key, name, checked_at FROM concert_artist")) {
+            try (ResultSet rs = st.executeQuery("SELECT artist_key, provider, name, checked_at FROM concert_lookup")) {
                 while (rs.next()) {
-                    byArtist.put(rs.getString(1), new ArtistConcerts(rs.getString(2),
-                            concerts.getOrDefault(rs.getString(1), List.of()), Instant.ofEpochMilli(rs.getLong(3))));
+                    String key = key(rs.getString(1), rs.getString(2));
+                    lookups.put(key, new ConcertLookup(rs.getString(3), rs.getString(2),
+                            concerts.getOrDefault(key, List.of()), Instant.ofEpochMilli(rs.getLong(4))));
                 }
             }
+            Map<String, Boolean> loaded = new HashMap<>();
+            try (ResultSet rs = st.executeQuery("SELECT provider, enabled FROM concert_provider_choice")) {
+                while (rs.next()) {
+                    loaded.put(rs.getString(1), rs.getInt(2) != 0);
+                }
+            }
+            choices = Map.copyOf(loaded);
         }
     }
 }

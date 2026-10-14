@@ -29,9 +29,9 @@ What it does today:
 - **Play a mood…** takes a request in your own words ("mellow prog for Sunday morning") and
   steers the music by it for the next 4 hours.
 - Christmas songs stay out of the mix until Advent, unless you ask for them.
-- Upcoming concerts by the artist that's playing (from Ticketmaster and the Spanish promoter
-  Madness Live!; Europe by default, or the countries you choose), in track info and as a pop-up,
-  plus a list of every concert by the artists you play.
+- Upcoming concerts by the artist that's playing (from Ticketmaster and the regional sources you
+  tick in the plugin settings; Europe by default, or the countries you choose), in track info and
+  as a pop-up, plus a list of every concert by the artists you play.
 
 See `CLAUDE.md` for the architecture and roadmap.
 
@@ -60,7 +60,7 @@ You need:
   give reasons and understand moods (about $0.0005 per mix). Create it **inside a
   workspace**; keys outside one are rejected. Without it DJ uses its own ranking.
 - A [Ticketmaster API key](https://developer.ticketmaster.com) (free) gives concert dates.
-  Without it DJ only knows the Spanish promoter Madness Live!'s shows.
+  Without it DJ only knows the shows of the regional sources you tick in the plugin settings.
 
 Put the keys in a file `.env` next to `docker-compose.yml`, one per line
 (`LASTFM_API_KEY=...`). DJ never logs them.
@@ -128,7 +128,8 @@ DJ sends no telemetry. What leaves your network, and only with that service's ke
 | Ticketmaster | Names of your artists, to look up concerts |
 | TIDAL (through LMS's TIDAL plugin) | Searches for songs to play, from your TIDAL account |
 
-Madness Live! is only read (its public ticket pages); nothing about you is sent.
+Regional concert sources (Madness Live!) are only read (their public pages), and only if you
+tick them; nothing about you is sent.
 
 ## Troubleshooting
 
@@ -242,7 +243,6 @@ configured, and the last enrichment and discovery results. Errors return
 | `DJ_LLM_MODEL` | `claude-haiku-5-5` | Claude model |
 | `DJ_LLM_LANGUAGE` | `English` | Language of the reasons |
 | `TICKETMASTER_API_KEY` | (none) | Concerts from Ticketmaster. Put it in `.env` |
-| `DJ_MADNESS_LIVE` | `1` | Concerts from madnesslive.es (`0` turns it off) |
 | `DJ_CONCERT_LOOKUP_MS` | `4000` | Max wait for looking up the playing artist's concerts |
 | `DJ_CONCERT_COUNTRIES` | `europe` | Countries whose concerts are shown: ISO codes and/or `europe`, or `all` |
 | `DJ_CONCERT_MAX_AGE_HOURS` | `24` | How long a concert lookup is reused; also how often all artists are checked |
@@ -292,6 +292,11 @@ the others. Only concerts in Europe are kept, unless `DJ_CONCERT_COUNTRIES` says
 keeps every country). A change applies at once, without new lookups. Artists are matched by exact name, so a band
 Ticketmaster lists under another name is missed, and two bands sharing a name can be mixed up.
 Shows sold only through other ticket sellers aren't included.
+
+Which sources are asked is chosen in the plugin settings (*Settings → Advanced → DJ → Concert
+sources*): Ticketmaster is on by default, regional sources are off until you tick them. Unticking
+one hides its shows at once; ticking one looks up your artists there straight away. A show two
+sources both list is shown once, as the first source in the list has it.
 
 **Madness Live!** ([madnesslive.es](https://www.madnesslive.es)), a Spanish rock and metal
 promoter that sells its own tickets, needs no key. It has no API: DJ reads its ticket shop once

@@ -3,6 +3,7 @@ package dj.domain;
 import dj.domain.model.ArtistConcerts;
 import dj.domain.model.ArtistNames;
 import dj.domain.model.Concert;
+import dj.domain.model.ConcertLookup;
 import dj.domain.model.Track;
 import dj.domain.port.ConcertSource;
 import dj.domain.port.ConcertStore;
@@ -13,10 +14,12 @@ import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
 import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -32,8 +35,11 @@ import java.util.regex.Pattern;
  * plays: on demand for the artist that's playing, and in a periodic scan of every library and
  * listened artist.
  *
- * <p>Lookups are cached in the {@link ConcertStore} for {@code maxAge}, including empty ones, so
- * an artist is asked about at most about once per {@code maxAge}.
+ * <p>Each enabled provider is asked separately and its lookups are cached in the
+ * {@link ConcertStore} for {@code maxAge}, including empty ones, so an artist is asked about at
+ * most about once per {@code maxAge} per provider. Their answers are merged when read: turning a
+ * provider off hides its shows at once, and turning one on asks only that one. A show two
+ * providers list (same date and city) is kept as the first one in priority order has it.
  */
 public class ConcertFinder {
 
@@ -49,32 +55,38 @@ public class ConcertFinder {
     private static final Pattern FEATURING = Pattern.compile("(?i)\\s+(feat\\.?|featuring|ft\\.)\\s.*$");
     private static final Set<String> NOT_ARTISTS = Set.of("", "various artists", "various", "unknown artist");
 
-    public record Result(int artists, int checked, int withConcerts, int failed, boolean aborted) {
+    /**
+     * @param checked artists at least one provider was asked about
+     * @param failed  lookups that failed
+     * @param gaveUp  providers that failed {@value #MAX_CONSECUTIVE_FAILURES} times in a row and
+     *                weren't asked again in this scan
+     */
+    public record Result(int artists, int checked, int withConcerts, int failed, List<String> gaveUp) {
     }
 
     private final LibraryPort library;
     private final DiscoveryStore discovered;
-    private final ConcertSource source;
+    private final ConcertProviders providers;
     private final ConcertStore store;
     private final Clock clock;
     private final Duration maxAge;
     private final Set<String> countries;
 
     /** Concerts in Europe ({@link #EUROPE}). */
-    public ConcertFinder(LibraryPort library, DiscoveryStore discovered, ConcertSource source, ConcertStore store,
+    public ConcertFinder(LibraryPort library, DiscoveryStore discovered, ConcertProviders providers, ConcertStore store,
                          Clock clock, Duration maxAge) {
-        this(library, discovered, source, store, clock, maxAge, EUROPE);
+        this(library, discovered, providers, store, clock, maxAge, EUROPE);
     }
 
     /**
      * @param clock     also gives the time zone that decides which concerts are still upcoming
      * @param countries ISO 3166-1 alpha-2 codes of the countries to keep; empty keeps every country
      */
-    public ConcertFinder(LibraryPort library, DiscoveryStore discovered, ConcertSource source, ConcertStore store,
+    public ConcertFinder(LibraryPort library, DiscoveryStore discovered, ConcertProviders providers, ConcertStore store,
                          Clock clock, Duration maxAge, Set<String> countries) {
         this.library = library;
         this.discovered = discovered;
-        this.source = source;
+        this.providers = providers;
         this.store = store;
         this.clock = clock;
         this.maxAge = maxAge;
@@ -108,38 +120,60 @@ public class ConcertFinder {
         return codes;
     }
 
+    public ConcertProviders providers() {
+        return providers;
+    }
+
     /**
-     * Upcoming concerts in the region by this artist, from the cache if it's fresh.
+     * Upcoming concerts in the region by this artist, from the cache where it's fresh. A provider
+     * that fails gives its last answer, if any.
      *
-     * @throws RuntimeException if the source fails and nothing is known about the artist
+     * @throws RuntimeException if every provider that was asked failed and nothing is known
      */
     public List<Concert> forArtist(String artist) {
         String name = mainArtist(artist);
         if (NOT_ARTISTS.contains(ArtistNames.key(name))) {
             return List.of();
         }
-        Optional<ArtistConcerts> cached = store.get(name);
-        if (cached.isPresent() && isFresh(cached.get(), maxAge)) {
-            return upcoming(cached.get().concerts());
-        }
-        try {
-            return upcoming(lookUp(name).concerts());
-        } catch (RuntimeException e) {
-            if (cached.isPresent()) {
-                LOG.log(Level.WARNING, "Concert lookup for " + name + " failed; using the last one", e);
-                return upcoming(cached.get().concerts());
+        List<List<Concert>> found = new ArrayList<>();
+        RuntimeException failure = null;
+        for (ConcertSource source : providers.enabled()) {
+            Optional<ConcertLookup> cached = store.get(name, source.provider().id());
+            if (cached.isPresent() && isFresh(cached.get(), maxAge)) {
+                found.add(cached.get().concerts());
+                continue;
             }
-            throw e;
+            try {
+                found.add(lookUp(source, name).concerts());
+            } catch (RuntimeException e) {
+                LOG.log(Level.WARNING, source.provider().name() + " concert lookup for " + name + " failed"
+                        + (cached.isPresent() ? "; using the last one" : ""), e);
+                cached.ifPresent(c -> found.add(c.concerts()));
+                failure = failure == null ? e : failure;
+            }
         }
+        if (found.isEmpty() && failure != null) {
+            throw failure;
+        }
+        return upcoming(merge(found));
     }
 
     /** Every known artist with upcoming concerts, the soonest first. */
     public List<ArtistConcerts> upcoming() {
+        List<String> order = providers.enabled().stream().map(s -> s.provider().id()).toList();
+        Map<String, List<ConcertLookup>> byArtist = new LinkedHashMap<>();
+        for (ConcertLookup lookup : store.all()) {
+            if (order.contains(lookup.provider())) {
+                byArtist.computeIfAbsent(ArtistNames.key(lookup.artist()), k -> new ArrayList<>()).add(lookup);
+            }
+        }
         List<ArtistConcerts> result = new ArrayList<>();
-        for (ArtistConcerts known : store.all()) {
-            List<Concert> concerts = upcoming(known.concerts());
+        for (List<ConcertLookup> lookups : byArtist.values()) {
+            lookups.sort(Comparator.comparingInt(l -> order.indexOf(l.provider())));
+            List<Concert> concerts = upcoming(merge(lookups.stream().map(ConcertLookup::concerts).toList()));
             if (!concerts.isEmpty()) {
-                result.add(new ArtistConcerts(known.artist(), concerts, known.checkedAt()));
+                Instant checkedAt = lookups.stream().map(ConcertLookup::checkedAt).max(Comparator.naturalOrder()).orElseThrow();
+                result.add(new ArtistConcerts(lookups.getFirst().artist(), concerts, checkedAt));
             }
         }
         result.sort(Comparator.comparing((ArtistConcerts a) -> a.concerts().getFirst().date())
@@ -148,57 +182,85 @@ public class ConcertFinder {
     }
 
     /**
-     * Looks up every library and listened artist whose last lookup is older than half of
-     * {@code maxAge} (so a daily scan keeps a day-old cache fresh), the most played first.
-     * Stops after {@value #MAX_CONSECUTIVE_FAILURES} failures in a row.
+     * Asks every enabled provider about every library and listened artist whose last lookup there
+     * is older than half of {@code maxAge} (so a daily scan keeps a day-old cache fresh), the most
+     * played artists first. A provider that fails {@value #MAX_CONSECUTIVE_FAILURES} times in a
+     * row isn't asked again in this scan; the others carry on.
      */
     public synchronized Result scanAll() {
         List<String> artists = artistsToScan();
+        List<ConcertSource> sources = providers.enabled();
         Duration stale = maxAge.dividedBy(2);
         int checked = 0;
         int withConcerts = 0;
         int failed = 0;
-        int consecutiveFailures = 0;
-        boolean aborted = false;
+        Map<String, Integer> failuresInARow = new HashMap<>();
+        Set<String> gaveUp = new LinkedHashSet<>();
         for (String artist : artists) {
-            Optional<ArtistConcerts> cached = store.get(artist);
-            if (cached.isPresent() && isFresh(cached.get(), stale)) {
-                if (!upcoming(cached.get().concerts()).isEmpty()) {
-                    withConcerts++;
-                }
-                continue;
+            if (!sources.isEmpty() && gaveUp.size() == sources.size()) {
+                LOG.log(Level.WARNING, "Every concert provider is failing; stopping this concert scan");
+                break;
             }
-            try {
-                if (!upcoming(lookUp(artist).concerts()).isEmpty()) {
-                    withConcerts++;
+            List<List<Concert>> found = new ArrayList<>();
+            boolean asked = false;
+            for (ConcertSource source : sources) {
+                String id = source.provider().id();
+                Optional<ConcertLookup> cached = store.get(artist, id);
+                if (gaveUp.contains(id) || cached.isPresent() && isFresh(cached.get(), stale)) {
+                    cached.ifPresent(c -> found.add(c.concerts()));
+                    continue;
                 }
+                asked = true;
+                try {
+                    found.add(lookUp(source, artist).concerts());
+                    failuresInARow.put(id, 0);
+                } catch (RuntimeException e) {
+                    failed++;
+                    cached.ifPresent(c -> found.add(c.concerts()));
+                    LOG.log(Level.WARNING, "Could not look up concerts by " + artist + " at " + source.provider().name(), e);
+                    if (failuresInARow.merge(id, 1, Integer::sum) >= MAX_CONSECUTIVE_FAILURES) {
+                        LOG.log(Level.WARNING, "Too many failures in a row; not asking {0} again in this scan",
+                                source.provider().name());
+                        gaveUp.add(id);
+                    }
+                }
+            }
+            if (asked) {
                 checked++;
-                consecutiveFailures = 0;
-            } catch (RuntimeException e) {
-                failed++;
-                consecutiveFailures++;
-                LOG.log(Level.WARNING, "Could not look up concerts by " + artist, e);
-                if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
-                    LOG.log(Level.WARNING, "Too many failures in a row; stopping this concert scan");
-                    aborted = true;
-                    break;
-                }
+            }
+            if (!upcoming(merge(found)).isEmpty()) {
+                withConcerts++;
             }
         }
-        Result result = new Result(artists.size(), checked, withConcerts, failed, aborted);
+        Result result = new Result(artists.size(), checked, withConcerts, failed, List.copyOf(gaveUp));
         LOG.log(Level.INFO, "Concert scan done: {0}", result);
         return result;
     }
 
-    private ArtistConcerts lookUp(String artist) {
+    private ConcertLookup lookUp(ConcertSource source, String artist) {
         // Every country is kept, so a change of region needs no new lookups
         List<Concert> concerts = source.upcoming(artist).stream()
                 .map(c -> new Concert(artist, c.title(), c.date(), c.time(), c.venue(), c.city(), c.countryCode(), c.url()))
                 .sorted(Comparator.comparing(Concert::date))
                 .toList();
-        ArtistConcerts found = new ArtistConcerts(artist, concerts, clock.instant());
+        ConcertLookup found = new ConcertLookup(artist, source.provider().id(), concerts, clock.instant());
         store.save(found);
         return found;
+    }
+
+    /** One list in date order, each show (date and city) once, as the first list has it. */
+    static List<Concert> merge(List<List<Concert>> lists) {
+        Set<String> shows = new HashSet<>();
+        List<Concert> merged = new ArrayList<>();
+        for (List<Concert> concerts : lists) {
+            for (Concert c : concerts) {
+                if (shows.add(c.date() + "|" + ArtistNames.key(c.city()))) {
+                    merged.add(c);
+                }
+            }
+        }
+        merged.sort(Comparator.comparing(Concert::date));
+        return merged;
     }
 
     /** Library artists by total play count, then artists played from streaming services. */
@@ -237,8 +299,8 @@ public class ConcertFinder {
                 .toList();
     }
 
-    private boolean isFresh(ArtistConcerts concerts, Duration age) {
-        return concerts.checkedAt().isAfter(clock.instant().minus(age));
+    private boolean isFresh(ConcertLookup lookup, Duration age) {
+        return lookup.checkedAt().isAfter(clock.instant().minus(age));
     }
 
     /** "Kygo feat. Selena Gomez" tours as Kygo. */

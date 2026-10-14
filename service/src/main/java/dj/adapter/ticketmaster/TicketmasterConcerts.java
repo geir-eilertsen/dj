@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dj.domain.model.ArtistNames;
 import dj.domain.model.Concert;
+import dj.domain.model.ConcertProvider;
 import dj.domain.port.ConcertSource;
 
 import java.io.IOException;
@@ -33,6 +34,8 @@ import java.util.Set;
  */
 public class TicketmasterConcerts implements ConcertSource {
 
+    public static final ConcertProvider PROVIDER = new ConcertProvider("ticketmaster", "Ticketmaster",
+            "Worldwide (needs an API key)", true);
     public static final URI DEFAULT_BASE_URL = URI.create("https://app.ticketmaster.com/discovery/v2/");
 
     private static final ObjectMapper JSON = new ObjectMapper();
@@ -56,6 +59,11 @@ public class TicketmasterConcerts implements ConcertSource {
         this.apiKey = apiKey;
         this.minInterval = minInterval;
         this.clock = clock;
+    }
+
+    @Override
+    public ConcertProvider provider() {
+        return PROVIDER;
     }
 
     @Override

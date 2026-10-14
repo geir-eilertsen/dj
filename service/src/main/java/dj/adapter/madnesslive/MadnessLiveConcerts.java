@@ -2,6 +2,7 @@ package dj.adapter.madnesslive;
 
 import dj.domain.model.ArtistNames;
 import dj.domain.model.Concert;
+import dj.domain.model.ConcertProvider;
 import dj.domain.port.ConcertSource;
 
 import java.io.IOException;
@@ -39,6 +40,8 @@ import java.util.regex.Pattern;
  */
 public class MadnessLiveConcerts implements ConcertSource {
 
+    public static final ConcertProvider PROVIDER = new ConcertProvider("madness-live", "Madness Live!",
+            "Rock and metal in Spain and Portugal", false);
     public static final URI DEFAULT_LISTING = URI.create("https://www.madnesslive.es/es/12-entradas");
 
     private static final Logger LOG = System.getLogger(MadnessLiveConcerts.class.getName());
@@ -98,6 +101,11 @@ public class MadnessLiveConcerts implements ConcertSource {
         this.minInterval = minInterval;
         this.maxAge = maxAge;
         this.clock = clock;
+    }
+
+    @Override
+    public ConcertProvider provider() {
+        return PROVIDER;
     }
 
     @Override
