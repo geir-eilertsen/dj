@@ -23,6 +23,8 @@ Source, issues and the plugin: **https://github.com/geir-eilertsen/dj**
 - **Learns from skips.** Skipped suggestions count against the song and a little against
   the artist.
 - **Christmas songs stay in December** (from Advent to 6 January), unless you ask for them.
+- **Concerts.** Upcoming concerts by the artist that's playing (Europe by default), in track
+  info and as a pop-up, and a list of every artist you play that's on tour.
 
 Artist similarity and styles come from Last.fm and are cached locally. If Last.fm, Claude or
 the internet is slow or down, DJ uses its own ranking, and if DJ itself is down, LMS falls
@@ -74,6 +76,8 @@ add `https://raw.githubusercontent.com/geir-eilertsen/dj/main/repo.xml`, then ti
 | `ANTHROPIC_API_KEY` | [console.anthropic.com](https://console.anthropic.com), created **inside a workspace** | No reasons, no Claude ordering; moods by keywords only |
 | `TICKETMASTER_API_KEY` | [developer.ticketmaster.com](https://developer.ticketmaster.com) (free) | Concert dates only from Madness Live! (Spain) |
 
+What each service is sent is listed under [Privacy](https://github.com/geir-eilertsen/dj#privacy).
+
 Claude Haiku costs roughly $0.0005 per mix. Keep keys in `.env`, not in the compose file. DJ
 never logs them.
 
@@ -89,6 +93,7 @@ never logs them.
 | `DJ_LLM_LANGUAGE` | `English` | Language of the reasons |
 | `DJ_LLM_TIMEOUT_MS` | `5000` | Give up on Claude after this long and use DJ's own order |
 | `DJ_CANDIDATES` | `50` | How many candidates Claude chooses from |
+| `DJ_CONCERT_COUNTRIES` | `europe` | Concerts in these countries: ISO codes and/or `europe` (e.g. `europe,TR`, `US,CA`), or `all` |
 
 More settings are listed in the [project README](https://github.com/geir-eilertsen/dj#configuration-environment-variables).
 
@@ -96,10 +101,11 @@ More settings are listed in the [project README](https://github.com/geir-eilerts
 
 - **Platforms:** `linux/amd64` and `linux/arm64` (64-bit Raspberry Pi OS). 32-bit ARM isn't
   available: there is no Java 21 runtime image for it.
-- **Tags:** `latest` and version tags such as `0.8.0`.
+- **Tags:** `latest` and version tags such as `0.11.0`.
 - **Data:** SQLite databases in `/data` (artist profiles, discovered music, listening history,
-  moods). Mount a volume there to keep them across updates.
-- **Port:** `9010` (`GET /health`, `GET /status`, `GET /mix`, `/mood`, `/why`).
+  moods, concerts). Mount a volume there to keep them across updates.
+- **Port:** `9010` (`GET /health`, `GET /status`, `GET /mix`, `/mood`, `/why`, `/concerts`).
+- **Memory:** about 500 MB.
 - **User:** runs as `nobody` (65534), not root.
 - **Network:** host networking is simplest. With port mapping instead (`-p 9010:9010`), set
   `LMS_URL` to LMS's address and the service address in LMS under *Settings → Advanced → DJ*.

@@ -131,11 +131,12 @@ then `Discoverer.discoverAll` (top 5 songs not in the library per library/listen
 top 3 for each one's 3 closest similar artists not in the library; skips namesakes whose
 online top 20 contains none of ≥2 library songs; aborts after 5 failures in a row).
 
-Concerts (`ConcertFinder`, off the mix path): keeps only Europe (`ConcertFinder.EUROPE`, ISO codes)
-and dates from today (listener's zone); "X feat. Y" is looked up as X. `forArtist` uses a lookup up to
+Concerts (`ConcertFinder`, off the mix path): stores every country, shows only `DJ_CONCERT_COUNTRIES`
+(default `europe` = `ConcertFinder.EUROPE`; ISO codes, `europe`, or `all`), filtered on read so a change
+needs no lookups, and dates from today (listener's zone); "X feat. Y" is looked up as X. `forArtist` uses a lookup up to
 `DJ_CONCERT_MAX_AGE_HOURS` old, else asks (falls back to the stale one on failure). `scanAll` (2 min after
 start, then every max age) refreshes library artists by play count, then listened artists, older than
-half the max age; aborts after 5 failures in a row. Plugin: track info folder "Concerts in Europe (N)"
+half the max age; aborts after 5 failures in a row. Plugin: track info folder "Upcoming concerts (N)"
 (cache only; a miss starts a lookup), Material pop-up on `newsong` merged with the reason (next 3,
 once per artist per player per 12 h), DJ menu "Upcoming concerts" (fixed item 4). Plugin caches
 concerts 12 h in the `dj` cache (`concerts:<lc artist>`; failures 10 min).
@@ -152,7 +153,7 @@ Config via env vars: `LMS_URL` (`http://localhost:9000`), `DJ_PORT` (9010),
 `DJ_DATA_DIR` (`data`; `/data` in Docker, volume `dj-data`), `LASTFM_API_KEY` (`.env`, never
 logged), `DJ_ENRICH_INTERVAL_HOURS` (24), `DJ_ARTIST_MAX_AGE_DAYS` (30),
 `DJ_SEED_LOOKUP_MS` (1500), `DJ_DISCOVERY_SHARE` (0.4; 0 disables discovery),
-`TICKETMASTER_API_KEY` (`.env`), `DJ_MADNESS_LIVE` (1), `DJ_CONCERT_LOOKUP_MS` (4000), `DJ_CONCERT_MAX_AGE_HOURS` (24),
+`TICKETMASTER_API_KEY` (`.env`), `DJ_MADNESS_LIVE` (1), `DJ_CONCERT_COUNTRIES` (`europe`), `DJ_CONCERT_LOOKUP_MS` (4000), `DJ_CONCERT_MAX_AGE_HOURS` (24),
 `ANTHROPIC_API_KEY` (`.env`; must be a **workspace-scoped** key, an unscoped one gets 400),
 `DJ_LLM_MODEL` (`claude-haiku-5-5`), `DJ_LLM_LANGUAGE` (English), `DJ_LLM_TIMEOUT_MS` (5000).
 Plugin timeout default 10 s (prefs migration 1 raised saved 5 s values).
@@ -167,6 +168,11 @@ service → `http://localhost:9000`).
 - Domain code must not import adapter packages or third-party libraries.
 - Tests: `cd service && mvn test`. Domain tests use hand-written fakes, not mocks.
 - Small, focused git commits.
+- The plugin is meant for the community (LMS's plugin list): no personal paths, players or
+  regions in user-facing text; the repository listing (category `playlists`, description) lives
+  in `tools/release-plugin.sh`. Inclusion in LMS's list: PR adding our `repo.xml` URL to
+  `include.json` in LMS-Community/lms-plugin-repository, after a forums.lyrion.org thread and
+  some user testing (their policy).
 - Ask before installing system packages or touching the running LMS (restarts, copying the
   plugin, changing player prefs).
 
