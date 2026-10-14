@@ -8,4 +8,20 @@
 		<input type="number" min="1" max="30" class="stdedit" name="pref_timeout" id="pref_timeout" value="[% prefs.pref_timeout | html %]" size="5">
 	[% END %]
 
+	[% WRAPPER setting title="PLUGIN_DJ_CONCERT_SOURCES" desc="PLUGIN_DJ_CONCERT_SOURCES_DESC" %]
+		[% IF concert_providers %]
+			<input type="hidden" name="concert_provider_ids" value="[% concert_provider_ids | html %]">
+			[% FOREACH provider IN concert_providers %]
+				<div>
+					<input type="checkbox" name="concert_provider_[% provider.id | html %]" id="concert_provider_[% provider.id | html %]" value="1"[% IF provider.enabled %] checked[% END %][% IF provider.unavailable %] disabled[% END %]>
+					<label for="concert_provider_[% provider.id | html %]">[% provider.name | html %]</label>
+					[% IF provider.coverage %]&ndash; [% provider.coverage | html %][% END %]
+					[% IF provider.unavailable %]<i>([% provider.unavailable | html %])</i>[% END %]
+				</div>
+			[% END %]
+		[% ELSE %]
+			[% "PLUGIN_DJ_SERVICE_UNREACHABLE" | string %]
+		[% END %]
+	[% END %]
+
 [% PROCESS settings/footer.html %]

@@ -7,8 +7,8 @@ package Plugins::DJ::Plugin;
 #   queue with a fresh mix and hands over to DSTM to keep it going, and "Play a mood...", which
 #   does the same for a request in the listener's own words ("mellow prog for Sunday morning").
 #   The mood keeps steering DJ's suggestions until it's cleared, Start DJ is used, or 4 hours pass.
-# - It shows upcoming concerts (Ticketmaster, Madness Live!) in the listener's region by the artist
-#   that's playing (track info, and a pop-up in Material Skin), and lists every concert by the
+# - It shows upcoming concerts (from the sources ticked in the settings) in the listener's region by the
+#   artist that's playing (track info, and a pop-up in Material Skin), and lists every concert by the
 #   artists the listener plays ("Upcoming concerts").
 #
 # Needs the dj service (Docker image geireilertsen/dj): https://github.com/geir-eilertsen/dj
@@ -54,7 +54,7 @@ my $prefs = preferences('plugin.dj');
 
 # Track URL => the reason DJ gave for suggesting it, from the mix responses. Track info menus
 # are built synchronously, so they read this instead of asking the service. Also holds
-# 'concerts:<artist>' => the artist's upcoming concerts, for the same reason.
+# 'concerts:<generation>:<artist>' => the artist's upcoming concerts, for the same reason.
 my $cache = Slim::Utils::Cache->new('dj', 1);
 
 # Player id => URL whose reason was last shown, so a song's reason pops up once
@@ -565,7 +565,12 @@ sub _concertsFor {
 	});
 }
 
-sub _concertKey { 'concerts:' . lc(shift) }
+# The concert sources changed in the settings: forget every cached artist's concerts
+sub concertSourcesChanged {
+	$prefs->set('concert_generation', ($prefs->get('concert_generation') || 0) + 1);
+}
+
+sub _concertKey { 'concerts:' . ($prefs->get('concert_generation') || 0) . ':' . lc(shift) }
 
 sub _concertPopupDue {
 	my ($client, $artist) = @_;

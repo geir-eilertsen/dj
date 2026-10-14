@@ -25,6 +25,18 @@ PLUGIN_DJ_TIMEOUT_DESC
 	EN	How long to wait for suggestions before letting Don't Stop The Music fall back to its default behaviour.
 	NO	Hvor lenge det ventes på forslag før Ikke stopp musikken faller tilbake til standard oppførsel.
 
+PLUGIN_DJ_CONCERT_SOURCES
+	EN	Concert sources
+	NO	Konsertkilder
+
+PLUGIN_DJ_CONCERT_SOURCES_DESC
+	EN	Where DJ looks for upcoming concerts by the artists you play. Regional sources are off until you tick them. Shows that two sources both list are shown once.
+	NO	Hvor DJ ser etter kommende konserter med artistene du spiller. Regionale kilder er av til du krysser dem av. Konserter som står hos flere kilder, vises én gang.
+
+PLUGIN_DJ_SERVICE_UNREACHABLE
+	EN	Could not reach the DJ service. Check its address above, save, and open this page again.
+	NO	Fikk ikke kontakt med DJ-tjenesten. Sjekk adressen over, lagre og åpne denne siden igjen.
+
 PLUGIN_DJ_START
 	EN	Start DJ
 	NO	Start DJ
