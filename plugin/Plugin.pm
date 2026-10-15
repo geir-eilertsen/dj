@@ -194,7 +194,7 @@ sub handleFeed {
 					type        => 'link',
 					url         => \&forgetMood,
 					passthrough => [{ text => $text }],
-					nextWindow  => 'grandparent',
+					nextWindow  => 'parent',
 				}],
 			};
 		}

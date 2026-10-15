@@ -225,7 +225,7 @@ service → `http://localhost:9000`).
   reasons feed back into the prompt.
 - **Step 4 (done):** moods. DJ menu: "Play a mood…" (OPML `search` item, `cachesearch 0`),
   recent moods (passthrough text), "Clear mood". Setting one starts a fresh mix of 10.
-  Each recent mood opens "Play" / "Forget" (static `items`; Forget goes back with `nextWindow => 'grandparent'`).
+  Each recent mood opens "Play" / "Forget" (static `items`; Forget goes back to the DJ menu with `nextWindow => 'parent'`: Material counts the result as a window, so `grandparent` lands on home).
   "Mood from photos…" (fixed item 5) is a `weblink` to the plugin's page `plugins/DJ/photo.html` (Material
   opens it in a dialog): the page scales photos to 1568 px JPEG in the browser and posts them to the raw
   handler `plugins/DJ/photomood`, which forwards to `/mood/photo` (45 s) and starts a fresh mix of 10.
