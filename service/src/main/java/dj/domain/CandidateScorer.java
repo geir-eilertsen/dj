@@ -29,7 +29,8 @@ import java.util.random.RandomGenerator;
  * outside the mood's era are penalised. Tracks already in the queue (or the same song from another service) are
  * excluded; artists heard in the last few tracks and recently skipped songs and artists are
  * penalised; and the final order is spread across artists so the top of the list isn't one
- * artist's discography.
+ * artist's discography. Artists that relate to neither the seeds nor the mood come after every
+ * one that does, so play count and noise can't lift them above music that fits.
  */
 public final class CandidateScorer {
 
@@ -119,9 +120,11 @@ public final class CandidateScorer {
                 score *= weights.outOfEraFactor();
             }
             score *= penalties.factor(track, weights);
-            scored.add(new Scored(track, group, score));
+            scored.add(new Scored(track, group, score, artistScores.get(artist) > 0));
         }
-        return spreadArtists(scored, limit);
+        List<Track> ranked = new ArrayList<>(spreadArtists(scored.stream().filter(Scored::related).toList(), limit));
+        ranked.addAll(spreadArtists(scored.stream().filter(s -> !s.related()).toList(), limit - ranked.size()));
+        return ranked;
     }
 
     private double artistScore(SeedProfile seed, MoodProfile mood, String artist) {
@@ -279,7 +282,10 @@ public final class CandidateScorer {
         }
     }
 
-    /** {@code artist} is the group key: side projects count as the same artist. */
-    private record Scored(Track track, String artist, double score) {
+    /**
+     * {@code artist} is the group key: side projects count as the same artist. {@code related}:
+     * the artist relates to the seeds or the mood at all.
+     */
+    private record Scored(Track track, String artist, double score, boolean related) {
     }
 }

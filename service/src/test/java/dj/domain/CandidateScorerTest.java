@@ -269,6 +269,33 @@ class CandidateScorerTest {
     }
 
     @Test
+    void artistsUnrelatedToTheMoodComeAfterEveryRelatedOneHoweverOftenPlayed() {
+        List<String> manyTags = new java.util.ArrayList<>(List.of("progressive rock"));
+        for (int i = 1; i < 20; i++) {
+            manyTags.add("tag " + i);
+        }
+        profiles.with("Barely Prog", manyTags);
+        Mood.Style prog = new Mood.Style(List.of("progressive rock"), List.of(), 0, 0);
+        Track barelyProg = track("30", "Barely Prog", 0, 0);
+        Track muchPlayedAbba = track("31", "ABBA", 0, 40);
+
+        List<Track> ranked = scorer().rank(List.of(muchPlayedAbba, barelyProg), List.of(), List.of(), 10,
+                Double.NEGATIVE_INFINITY, prog);
+
+        assertEquals(ids("30", "31"), Tracks.ids(ranked));
+    }
+
+    @Test
+    void unrelatedArtistsStillFillTheListWhenTooFewRelate() {
+        Mood.Style prog = new Mood.Style(List.of("progressive rock"), List.of(), 0, 0);
+
+        List<Track> ranked = scorer().rank(List.of(abba, unknownArtist, porcupineTree), List.of(), List.of(), 2,
+                Double.NEGATIVE_INFINITY, prog);
+
+        assertEquals(ids("11", "13"), Tracks.ids(ranked));
+    }
+
+    @Test
     void discoveredTracksMustFitTheMood() {
         Mood.Style disco = new Mood.Style(List.of("disco"), List.of(), 0, 0);
 

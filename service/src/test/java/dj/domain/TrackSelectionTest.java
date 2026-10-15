@@ -129,6 +129,39 @@ class TrackSelectionTest {
     }
 
     @Test
+    void keepsAnArtistsTwoTracksFivePlacesApart() {
+        List<Track> pool = new java.util.ArrayList<>(List.of(track("s1", "Seals & Crofts"), track("s2", "Seals & Crofts")));
+        for (int i = 1; i <= 8; i++) {
+            pool.add(track("o" + i, "Other " + i));
+        }
+
+        List<Track> selected = TrackSelection.select(pool, ids("s1", "s2", "o1", "o2", "o3", "o4", "o5", "o6", "o7", "o8"), 10);
+
+        assertEquals(ids("s1", "o1", "o2", "o3", "o4", "s2", "o5", "o6", "o7", "o8"), ids(selected));
+    }
+
+    @Test
+    void countsSideProjectsForTheGap() {
+        List<Track> pool = List.of(track("1", "Devin Townsend Project"), track("2", "Devin Townsend Band"),
+                track("3", "Opeth"), track("4", "Katatonia"), track("5", "Gojira"), track("6", "Riverside"),
+                track("7", "TOOL"), track("8", "Leprous"), track("9", "Haken"), track("10", "Tesseract"));
+
+        List<Track> selected = TrackSelection.select(pool, ids("1", "2"), 10);
+
+        assertEquals(ids("1", "3", "4", "5", "6", "2", "7", "8", "9", "10"), ids(selected));
+    }
+
+    @Test
+    void narrowsTheGapRatherThanDropAChoiceWhenArtistsRunOut() {
+        List<Track> pool = List.of(track("1", "Opeth"), track("2", "Opeth"), track("3", "Katatonia"),
+                track("4", "Katatonia"));
+
+        List<Track> selected = TrackSelection.select(pool, ids("1", "2", "3", "4"), 4);
+
+        assertEquals(ids("1", "3", "2", "4"), ids(selected));
+    }
+
+    @Test
     void anyValidIsFalseWhenEveryChoiceIsInvented() {
         assertFalse(TrackSelection.anyValid(candidates, ids("98", "99")));
         assertTrue(TrackSelection.anyValid(candidates, ids("98", "3")));
