@@ -189,6 +189,10 @@ PLUGIN_DJ_PHOTO_LIGHT
 	EN	Light
 	NO	Lys
 
-PLUGIN_DJ_PHOTO_CLOSE_CAMERA
-	EN	Close camera
-	NO	Lukk kamera
+PLUGIN_DJ_PHOTO_CANCEL
+	EN	Cancel
+	NO	Avbryt
+
+PLUGIN_DJ_PHOTO_DONE
+	EN	Done
+	NO	Ferdig

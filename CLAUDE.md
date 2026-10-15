@@ -227,6 +227,11 @@ service → `http://localhost:9000`).
   opens it in a dialog): the page scales photos to 1568 px JPEG in the browser and posts them to the raw
   handler `plugins/DJ/photomood`, which forwards to `/mood/photo` (45 s) and starts a fresh mix of 10.
   Webcam (`getUserMedia`) only on https/localhost; on plain http the page offers file input only.
+  The camera is a full-screen viewfinder in the page, modelled on geir-eilertsen/rack's `camera.js` (a file
+  input's camera app may get the page killed on Android): back camera first, camera list + switch, 1x/2x/4x
+  zoom and light only where the track reports them, frames off the stream, a refusal remembered for a day.
+  Templates must be ASCII only: LMS encodes a template's UTF-8 a second time (strings.txt text is fine).
+  LMS re-reads a changed template at most hourly (`STAT_TTL` 3600) unless restarted.
   Ideas: discover around mood artists not in the library; per-mood skip learning.
 - Local audio + bliss-analyser would make `SimilarityPort` real.
 
