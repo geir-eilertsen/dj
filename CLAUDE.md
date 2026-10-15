@@ -78,6 +78,10 @@ Ports (`dj.domain.port`):
   Domain fallback `MoodKeywords` (known tags, library artists ≥4 chars, decades incl. "80-tallet").
 - `PlayerActivityPort`: what each player plays now, queue position, queue slices.
   Adapter `LmsPlayerActivity`.
+- `PhotoReader`: photos of the moment + local time → `PhotoReading(mood, why)`. Adapter `ClaudePhotoReader`
+  (same model and settings as `ClaudeLlm`, 20 s timeout; scene over faces, never guess age/identity/health;
+  mood ≤10 words, one direction, in `DJ_LLM_LANGUAGE`; photos never stored or logged). `NoPhotoReader`
+  without a key. Domain `PhotoMoods` (1-4 photos) sets the reading's text via `MoodService.set`.
 - `ConcertSource`: upcoming concerts from one provider, which describes itself (`ConcertProvider`: id, name,
   coverage, `onByDefault`; regional ones are off by default so nobody crawls a site of no use to them).
   Adding a provider = an adapter + one line in `App` (priority order). Adapter `TicketmasterConcerts` (Discovery API: `attractions.json`
@@ -163,7 +167,8 @@ HTTP API (`dj.adapter.http`): `GET /mix?player=<mac>&seed=<id,id,..>&count=<n>&f
 `{"source","tracks":[{"id","url","title","artist","album","reason"?}]}`;
 `GET /why?player=&url=` (404 if DJ gave no reason); `GET /mood?player=` →
 `{"current","recent"}`; `POST /mood` (`player`, `text`; query or form) → the understood mood;
-`POST /mood/clear?player=`; `POST /mood/forget` (`player`, `text`) → `{"recent"}`; `GET /concerts?artist=` → `{"artist","concerts":[{date,time?,title,venue,city,country,url?}]}`
+`POST /mood/clear?player=`; `POST /mood/forget` (`player`, `text`) → `{"recent"}`;
+`POST /mood/photo` (JSON `{player, photos:[data URLs]}`, ≤5 MB each) → `{"mood","why"}` (503 without a key); `GET /concerts?artist=` → `{"artist","concerts":[{date,time?,title,venue,city,country,url?}]}`
 (504 after `DJ_CONCERT_LOOKUP_MS`); `GET /concerts` → `{"artists":[{artist,concerts}]}`;
 `GET /concerts/providers` → `{"providers":[{id,name,coverage,enabled,unavailable?}]}`;
 `POST /concerts/providers` (`enabled=id,id`, may be empty) → the same; `GET /health`; `GET /status`.
@@ -218,10 +223,17 @@ service → `http://localhost:9000`).
 - **Step 4 (done):** moods. DJ menu: "Play a mood…" (OPML `search` item, `cachesearch 0`),
   recent moods (passthrough text), "Clear mood". Setting one starts a fresh mix of 10.
   Each recent mood opens "Play" / "Forget" (static `items`; Forget goes back with `nextWindow => 'grandparent'`).
+  "Mood from photos…" (fixed item 5) is a `weblink` to the plugin's page `plugins/DJ/photo.html` (Material
+  opens it in a dialog): the page scales photos to 1568 px JPEG in the browser and posts them to the raw
+  handler `plugins/DJ/photomood`, which forwards to `/mood/photo` (45 s) and starts a fresh mix of 10.
+  Webcam (`getUserMedia`) only on https/localhost; on plain http the page offers file input only.
   Ideas: discover around mood artists not in the library; per-mood skip learning.
 - Local audio + bliss-analyser would make `SimilarityPort` real.
 
 ## Gotchas
+- Browsers block cameras (`getUserMedia`) on plain-http pages, and LMS is http: webcam capture on the
+  photo page needs LMS behind https (or Chrome's insecure-origin flag). Phones get their camera via the
+  file input regardless.
 - Restarting LMS while discovery runs makes TIDAL searches fail; the run aborts after 5 and
   retries those artists 10 min later / next run. Prefer restarting LMS when discovery is idle
   (`/status` → `lastDiscovery` set).

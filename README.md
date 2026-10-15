@@ -27,7 +27,8 @@ What it does today:
   day, with a one-line reason for each, shown on Now Playing as each song starts. Without an
   API key, or if Claude is slow or unreachable, DJ's own ranking is used.
 - **Play a mood…** takes a request in your own words ("mellow prog for Sunday morning") and
-  steers the music by it for the next 4 hours.
+  steers the music by it for the next 4 hours. **Mood from photos…** reads the mood from photos
+  of the moment instead.
 - Christmas songs stay out of the mix until Advent, unless you ask for them.
 - Upcoming concerts by the artist that's playing (from Ticketmaster and the regional sources you
   tick in the plugin settings; Europe by default, or the countries you choose), in track info and
@@ -124,7 +125,7 @@ DJ sends no telemetry. What leaves your network, and only with that service's ke
 | Service | What DJ sends |
 |---|---|
 | Last.fm | Names of your artists, to look up similar artists, styles and top songs |
-| Anthropic (Claude) | For each mix: the player's name, day and time, your mood request, the last 8 songs played and about 50 candidate songs (artist, title, album, year, styles) |
+| Anthropic (Claude) | For each mix: the player's name, day and time, your mood request, the last 8 songs played and about 50 candidate songs (artist, title, album, year, styles). With **Mood from photos…**: the photos you take or choose, and the day and time (the photos are never stored) |
 | Ticketmaster | Names of your artists, to look up concerts |
 | TIDAL (through LMS's TIDAL plugin) | Searches for songs to play, from your TIDAL account |
 
@@ -211,6 +212,9 @@ Moods (requests in the listener's own words):
   returns how DJ understood it: `{"text","tags","artists","fromYear","toYear","setAt","expiresAt"}`.
 - `GET /mood?player=<id>` returns `{"current": <mood or null>, "recent": ["text", ...]}`.
 - `POST /mood/clear?player=<id>` ends the mood.
+- `POST /mood/photo` with JSON `{"player": "<id>", "photos": ["data:image/jpeg;base64,...", ...]}` (1-4
+  photos, up to 5 MB each) reads the mood from photos of the moment and sets it like `POST /mood`;
+  returns `{"mood": <as above>, "why": "what in the photos led there"}`. 503 without an Anthropic key.
 
 `GET /why?player=<id>&url=<track url>` returns `{"reason"}` for a track DJ suggested, else 404.
 
@@ -384,6 +388,17 @@ they're ready in December.
 
 Pinning a recent mood to the home screen pins its *position* in the list (LMS menus work by
 position), so it changes when you set new moods; pin **Play a mood…** instead.
+
+**Apps → DJ → Mood from photos…** opens a page where you take or choose up to 4 photos of where you
+are and what you're doing. Claude reads them together, with the day and time, as one short mood
+("relaxed 70s soft rock for a focused weekday morning", with a sentence on why), which is then set
+and played like a typed one and shows among your recent moods. The scene counts more than faces:
+Claude is told not to guess anyone's age, identity or health. The photos go to Anthropic and are
+never stored or logged. Needs an Anthropic API key.
+
+On a phone, **Add photos** offers the camera. A webcam works only when the browser allows it:
+browsers allow cameras on secure (`https://`) pages and `localhost` only, so with LMS on plain
+`http://` a computer can add saved photos but not use its webcam.
 
 ### Concerts
 
