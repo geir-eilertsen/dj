@@ -111,6 +111,18 @@ class ClaudeLlmTest {
     }
 
     @Test
+    void aFreshRequestNamesTheListenersFavourites() {
+        PlaybackContext context = new PlaybackContext("p1", "Kjøkken", true, List.of(playing), SUNDAY_MORNING);
+        Mood mood = new Mood("pool lounge", Mood.Style.NONE, Instant.EPOCH);
+        dj.domain.model.Taste taste = new dj.domain.model.Taste(new java.util.LinkedHashMap<>(
+                java.util.Map.of("Gazpacho", 1.0)));
+
+        String message = llm.userMessage(new MixBrief(context, true, Optional.of(mood), taste), List.of(library), 5);
+
+        assertTrue(message.contains("favourite artists lately: Gazpacho."), message);
+    }
+
+    @Test
     void readsPicksAndReasons() {
         List<Pick> picks = ClaudeLlm.parse("""
                 {"picks":[{"id":"551","reason":"Kim Larsen's own band, same era"},

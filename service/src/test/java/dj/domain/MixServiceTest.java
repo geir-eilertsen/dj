@@ -527,6 +527,7 @@ class MixServiceTest {
         CandidateScorer scorer = new CandidateScorer(profiles, ScoringWeights.DEFAULTS.withJitter(0), new Random(0));
         MixService service = new MixService(library, discovered, similarity, scorer, llm, contexts, enricher,
                 discoverer, new TimeOfDaySeeds(history, java.time.Clock.systemDefaultZone(), new Random(0)),
+                new ListenerTaste(history, library, java.time.Clock.systemUTC()),
                 new MoodService(moods, (request, tags) -> Mood.Style.NONE, profiles, library, java.time.Clock.systemUTC(),
                         executor, Duration.ofSeconds(1)),
                 feedback,

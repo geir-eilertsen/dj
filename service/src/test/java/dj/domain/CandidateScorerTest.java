@@ -1,6 +1,7 @@
 package dj.domain;
 
 import dj.domain.model.Mood;
+import dj.domain.model.Taste;
 import dj.domain.model.Track;
 import org.junit.jupiter.api.Test;
 
@@ -220,6 +221,28 @@ class CandidateScorerTest {
                 List.of(), List.of(), 10, Double.NEGATIVE_INFINITY, prog);
 
         assertEquals(ids("11", "12"), Tracks.ids(ranked).subList(0, 2));
+    }
+
+    @Test
+    void withAMoodAndNoSeedsTheListenersTasteBreaksTies() {
+        Mood.Style progMetal = new Mood.Style(List.of("progressive metal"), List.of(), 0, 0);
+        Taste likesOpeth = new Taste(java.util.Map.of("Opeth", 1.0));
+
+        List<Track> ranked = scorer().rank(List.of(stevenWilson, katatonia), List.of(), List.of(), 10,
+                Double.NEGATIVE_INFINITY, progMetal, likesOpeth);
+
+        assertEquals(ids("10", "12"), Tracks.ids(ranked));
+    }
+
+    @Test
+    void theListenersTasteDoesntLiftMusicThatMissesTheMood() {
+        Mood.Style disco = new Mood.Style(List.of("disco"), List.of(), 0, 0);
+        Taste likesOpeth = new Taste(java.util.Map.of("Opeth", 1.0));
+
+        List<Track> ranked = scorer().rank(List.of(katatonia, abba), List.of(), List.of(), 10,
+                Double.NEGATIVE_INFINITY, disco, likesOpeth);
+
+        assertEquals(ids("13", "10"), Tracks.ids(ranked));
     }
 
     @Test

@@ -6,6 +6,7 @@ import dj.domain.model.MixRequest;
 import dj.domain.model.Mood;
 import dj.domain.model.Pick;
 import dj.domain.model.PlaybackContext;
+import dj.domain.model.Taste;
 import dj.domain.model.Track;
 import dj.domain.model.TrackId;
 import dj.domain.port.DiscoveryStore;
@@ -70,6 +71,7 @@ public final class MixService {
     private final Optional<ArtistEnricher> enricher;
     private final Optional<Discoverer> discoverer;
     private final TimeOfDaySeeds timeOfDaySeeds;
+    private final ListenerTaste taste;
     private final MoodService moods;
     private final FeedbackStore feedback;
     private final Clock clock;
@@ -79,12 +81,13 @@ public final class MixService {
     /**
      * @param enricher   looks up unknown seed artists; empty if there is no online source
      * @param discoverer finds music around artists played from a streaming service; empty if disabled
+     * @param taste      the listener's favourite artists, which steer a mood started from scratch
      * @param executor   runs the LLM call, seed lookups and discovery so they can be abandoned or left running
      */
     public MixService(LibraryPort library, DiscoveryStore discovered, SimilarityPort similarity,
                       CandidateScorer scorer, LlmPort llm, PlaybackContextPort playbackContext,
                       Optional<ArtistEnricher> enricher, Optional<Discoverer> discoverer,
-                      TimeOfDaySeeds timeOfDaySeeds, MoodService moods, FeedbackStore feedback, Clock clock,
+                      TimeOfDaySeeds timeOfDaySeeds, ListenerTaste taste, MoodService moods, FeedbackStore feedback, Clock clock,
                       Executor executor, MixSettings settings) {
         this.library = Objects.requireNonNull(library);
         this.discovered = Objects.requireNonNull(discovered);
@@ -95,6 +98,7 @@ public final class MixService {
         this.enricher = Objects.requireNonNull(enricher);
         this.discoverer = Objects.requireNonNull(discoverer);
         this.timeOfDaySeeds = Objects.requireNonNull(timeOfDaySeeds);
+        this.taste = Objects.requireNonNull(taste);
         this.moods = Objects.requireNonNull(moods);
         this.feedback = Objects.requireNonNull(feedback);
         this.clock = Objects.requireNonNull(clock);
@@ -110,7 +114,8 @@ public final class MixService {
             endMood(request.playerId(), mood.get());
             mood = Optional.empty();
         }
-        MixBrief brief = new MixBrief(context, fresh, mood);
+        MixBrief brief = new MixBrief(context, fresh, mood,
+                fresh && mood.isPresent() ? tasteOf(request.playerId()) : Taste.NONE);
         List<Track> candidates = candidates(request, brief);
         List<Pick> picks = askLlm(brief, candidates, request.count());
         List<TrackId> chosen = picks.stream().map(Pick::id).toList();
@@ -136,6 +141,16 @@ public final class MixService {
             feedback.recordSuggested(playerId, mix.tracks(), reasons, clock.instant());
         } catch (RuntimeException e) {
             LOG.log(Level.WARNING, "Could not remember suggestions for " + playerId, e);
+        }
+    }
+
+    /** A failing history mustn't stop the music. */
+    private Taste tasteOf(String playerId) {
+        try {
+            return taste.of(playerId);
+        } catch (RuntimeException e) {
+            LOG.log(Level.WARNING, "Could not work out the taste on " + playerId + "; mixing without it", e);
+            return Taste.NONE;
         }
     }
 
@@ -200,6 +215,7 @@ public final class MixService {
         }
         List<String> artists = new ArrayList<>(mood.artists());
         seeds.forEach(t -> artists.add(t.artist()));
+        artists.addAll(brief.taste().artists().keySet());
         lookUpArtists(artists);
         discoverAroundStreamedArtists(queue, byId);
 
@@ -213,7 +229,7 @@ public final class MixService {
             List<Track> christmasSongs = new ArrayList<>(all);
             christmasSongs.addAll(discovered.allTracks());
             christmasSongs.removeIf(t -> !ChristmasSongs.isChristmasSong(t));
-            scorer.rank(christmasSongs, seeds, queue, poolSize, Double.NEGATIVE_INFINITY, mood)
+            scorer.rank(christmasSongs, seeds, queue, poolSize, Double.NEGATIVE_INFINITY, mood, brief.taste())
                     .forEach(t -> pool.putIfAbsent(t.id(), t));
         }
         for (Track track : neighbours(request.seeds(), poolSize)) {
@@ -224,10 +240,10 @@ public final class MixService {
         }
 
         List<Track> fromLibrary = scorer.rank(all.stream().filter(allowed).toList(), seeds, queue, poolSize,
-                Double.NEGATIVE_INFINITY, mood);
+                Double.NEGATIVE_INFINITY, mood, brief.taste());
         List<Track> fromDiscovery = settings.discoveryShare() > 0
                 ? scorer.rank(discovered.allTracks().stream().filter(allowed).toList(), seeds, queue, poolSize,
-                        MixSettings.DISCOVERY_MIN_RELEVANCE, mood)
+                        MixSettings.DISCOVERY_MIN_RELEVANCE, mood, brief.taste())
                 : List.of();
         for (Track track : interleave(fromLibrary, fromDiscovery, settings.discoveryShare())) {
             if (pool.size() == poolSize) {

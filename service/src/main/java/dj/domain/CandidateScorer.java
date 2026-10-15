@@ -4,6 +4,7 @@ import dj.domain.model.ArtistNames;
 import dj.domain.model.ArtistProfile;
 import dj.domain.model.Mood;
 import dj.domain.model.SongTitles;
+import dj.domain.model.Taste;
 import dj.domain.model.Track;
 import dj.domain.model.TrackId;
 import dj.domain.port.ArtistProfileStore;
@@ -30,9 +31,13 @@ import java.util.random.RandomGenerator;
  * excluded; artists heard in the last few tracks and recently skipped songs and artists are
  * penalised; and the final order is spread across artists so the top of the list isn't one
  * artist's discography. Artists that relate to neither the seeds nor the mood come after every
- * one that does, so play count and noise can't lift them above music that fits.
+ * one that does, so play count and noise can't lift them above music that fits. A mood without
+ * seeds favours artists close to the listener's taste among those that fit it.
  */
 public final class CandidateScorer {
+
+    /** Share of the taste match that comes from similar artists rather than shared styles. */
+    static final double TASTE_BY_ARTIST = 0.6;
 
     private final ArtistProfileStore profiles;
     private final ScoringWeights weights;
@@ -79,8 +84,18 @@ public final class CandidateScorer {
      */
     public List<Track> rank(Collection<Track> library, List<Track> seeds, List<Track> queue, int limit,
                             double minRelevance, Mood.Style mood) {
+        return rank(library, seeds, queue, limit, minRelevance, mood, Taste.NONE);
+    }
+
+    /**
+     * Like {@link #rank(Collection, List, List, int, double, Mood.Style)}; with a mood and no seeds,
+     * artists that fit the mood count more the closer they are to the listener's taste.
+     */
+    public List<Track> rank(Collection<Track> library, List<Track> seeds, List<Track> queue, int limit,
+                            double minRelevance, Mood.Style mood, Taste taste) {
         SeedProfile seed = seedProfile(seeds);
         MoodProfile wanted = moodProfile(mood);
+        TasteProfile liked = tasteProfile(taste);
         // Closeness to the seeds' years follows the seeds, so it counts as little as they do.
         double seedShare = wanted.isEmpty() ? 1 : 1 - weights.mood();
         Set<String> queuedSongs = new HashSet<>();
@@ -105,7 +120,7 @@ public final class CandidateScorer {
             }
             String artist = ArtistNames.key(track.artist());
             String group = ArtistNames.groupKey(track.artist());
-            double score = artistScores.computeIfAbsent(artist, a -> artistScore(seed, wanted, a));
+            double score = artistScores.computeIfAbsent(artist, a -> artistScore(seed, wanted, liked, a));
             if (score < minRelevance) {
                 continue;
             }
@@ -127,7 +142,7 @@ public final class CandidateScorer {
         return ranked;
     }
 
-    private double artistScore(SeedProfile seed, MoodProfile mood, String artist) {
+    private double artistScore(SeedProfile seed, MoodProfile mood, TasteProfile taste, String artist) {
         Map<String, Double> tags = profiles.find(artist).map(CandidateScorer::tagVector).orElse(Map.of());
         double fromSeeds = seed.artists.isEmpty() ? 0
                 : weights.artist() * artistSimilarity(seed, artist) + weights.tags() * cosine(seed.tags, tags);
@@ -135,7 +150,34 @@ public final class CandidateScorer {
             return fromSeeds;
         }
         double fromMood = weights.artist() * moodArtistSimilarity(mood, artist) + weights.tags() * cosine(mood.tags, tags);
-        return seed.artists.isEmpty() ? fromMood : (1 - weights.mood()) * fromSeeds + weights.mood() * fromMood;
+        if (seed.artists.isEmpty()) {
+            // Nothing to follow: among music that fits the mood, prefer what the listener likes.
+            return taste.artists.isEmpty() ? fromMood
+                    : fromMood * (1 + weights.taste() * tasteMatch(taste, artist, tags));
+        }
+        return (1 - weights.mood()) * fromSeeds + weights.mood() * fromMood;
+    }
+
+    /** 0..1: how close the artist is to the listener's favourites, by name and by style. */
+    private double tasteMatch(TasteProfile taste, String artist, Map<String, Double> tags) {
+        double best = 0;
+        for (Map.Entry<String, Double> liked : taste.artists.entrySet()) {
+            double similarity = liked.getKey().equals(artist) ? 1
+                    : Math.max(match(liked.getKey(), artist), match(artist, liked.getKey()));
+            best = Math.max(best, liked.getValue() * similarity);
+        }
+        return TASTE_BY_ARTIST * best + (1 - TASTE_BY_ARTIST) * cosine(taste.tags, tags);
+    }
+
+    private TasteProfile tasteProfile(Taste taste) {
+        Map<String, Double> artists = new HashMap<>();
+        Map<String, Double> tags = new HashMap<>();
+        taste.artists().forEach((name, weight) -> {
+            String artist = ArtistNames.key(name);
+            artists.merge(artist, weight, Math::max);
+            profiles.find(artist).ifPresent(p -> tagVector(p).forEach((tag, v) -> tags.merge(tag, weight * v, Double::sum)));
+        });
+        return new TasteProfile(artists, tags);
     }
 
     /** An artist the listener asked for matches fully; otherwise as similar as profiles say. */
@@ -269,6 +311,10 @@ public final class CandidateScorer {
     /** Same song regardless of service or version, e.g. a Spotify original and a TIDAL remaster. */
     private static String songKey(Track track) {
         return ArtistNames.key(track.artist()) + "|" + SongTitles.key(track.title());
+    }
+
+    /** {@code artists}: name keys and their weights; {@code tags}: the favourites' styles combined. */
+    private record TasteProfile(Map<String, Double> artists, Map<String, Double> tags) {
     }
 
     private record SeedProfile(Map<String, Double> artists, Map<String, Double> tags, double year) {

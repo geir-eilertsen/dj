@@ -28,6 +28,7 @@ import dj.domain.ConcertFinder;
 import dj.domain.ConcertProviders;
 import dj.domain.Discoverer;
 import dj.domain.HistoryRecorder;
+import dj.domain.ListenerTaste;
 import dj.domain.MixService;
 import dj.domain.MixSettings;
 import dj.domain.MoodService;
@@ -112,6 +113,7 @@ public final class App {
                 enricher,
                 discoverer,
                 new TimeOfDaySeeds(history, Clock.systemDefaultZone(), new Random()),
+                new ListenerTaste(history, library, Clock.systemUTC()),
                 moods,
                 history,
                 Clock.systemUTC(),

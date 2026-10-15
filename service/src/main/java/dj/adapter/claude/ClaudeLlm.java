@@ -176,6 +176,11 @@ public class ClaudeLlm implements LlmPort {
 
         if (brief.fresh() && brief.mood().isPresent()) {
             m.append("This starts a new queue for that request; it needn't follow what was playing.\n\n");
+            if (!brief.taste().isEmpty()) {
+                m.append("The listener's favourite artists lately: ")
+                        .append(String.join(", ", brief.taste().artists().keySet()))
+                        .append(". Among tracks that fit the request, prefer those closest to their taste.\n\n");
+            }
         } else if (brief.fresh()) {
             m.append("The player is starting fresh; the candidates were chosen from what is usually played around this time.\n\n");
         } else if (!context.queue().isEmpty()) {

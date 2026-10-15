@@ -130,7 +130,10 @@ Core flow (`MixService`, settings in `MixSettings`):
    `DISCOVERY_MIN_RELEVANCE` 0.25): similar artist + tag cosine + play count + year + jitter;
    excludes queued songs and other versions of them, one version per song; recent artists
    ×0.3 (not artists the mood names); mood: its artists and tags are 75% of the artist score
-   (`ScoringWeights.mood`; 100% with no seeds), seed-year closeness scaled down to match,
+   (`ScoringWeights.mood`; 100% with no seeds, where the listener's taste then multiplies an artist's
+   mood score by up to ×2 (`ScoringWeights.taste`): `ListenerTaste` = top 10 artists played on the
+   player in 90 days (30-day half-life), or the library's play counts with <3 artists; the LLM is
+   told them too), seed-year closeness scaled down to match,
    tracks outside the mood's years ×0.4; Christmas songs (`ChristmasSongs`: title/album words in
    EN/NO/DA/SV/DE/ES, "jul…" spelled out to spare July/Julie/Julia/Jules) are dropped unless in
    season (first Sunday of Advent to 6 Jan, player's local date), the mood asks for them, or a
