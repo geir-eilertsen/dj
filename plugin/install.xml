@@ -5,7 +5,7 @@
 	<name>PLUGIN_DJ</name>
 	<icon>plugins/DJ/html/images/icon.png</icon>
 	<module>Plugins::DJ::Plugin</module>
-	<version>0.11.0</version>
+	<version>0.11.1</version>
 	<description>PLUGIN_DJ_DESC</description>
 	<creator>Geir Eilertsen</creator>
 	<homepageURL>https://github.com/geir-eilertsen/dj</homepageURL>
