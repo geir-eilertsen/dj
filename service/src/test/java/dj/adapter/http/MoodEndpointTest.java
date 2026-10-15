@@ -6,6 +6,8 @@ import dj.adapter.sqlite.SqliteArtistProfileStore;
 import dj.adapter.sqlite.SqliteMoodStore;
 import dj.adapter.stub.NoMoodInterpreter;
 import dj.domain.MoodService;
+import dj.domain.PhotoMoods;
+import dj.domain.model.PhotoReading;
 import dj.domain.model.Track;
 import dj.domain.model.TrackId;
 import org.junit.jupiter.api.AfterEach;
@@ -20,6 +22,7 @@ import java.net.http.HttpResponse;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executors;
@@ -38,11 +41,12 @@ class MoodEndpointTest {
 
     private MixHttpServer server;
     private final HttpClient http = HttpClient.newHttpClient();
+    private MoodService moods;
 
     @BeforeEach
     void start() throws Exception {
         List<Track> library = List.of(new Track(TrackId.of("1"), "spotify:track:1", "Sommer", "Kim Larsen", "", 1983, 0));
-        MoodService moods = new MoodService(new SqliteMoodStore(dir.resolve("mood.db")), new NoMoodInterpreter(),
+        moods = new MoodService(new SqliteMoodStore(dir.resolve("mood.db")), new NoMoodInterpreter(),
                 new SqliteArtistProfileStore(dir.resolve("dj.db")), () -> library, Clock.systemUTC(),
                 Executors.newVirtualThreadPerTaskExecutor(), Duration.ofSeconds(1));
         server = new MixHttpServer(null, null, moods, 0, Map::of);
@@ -99,6 +103,48 @@ class MoodEndpointTest {
         assertEquals(400, send(HttpRequest.newBuilder(uri("/mood?player=p&text=%20"))
                 .POST(HttpRequest.BodyPublishers.noBody())).statusCode());
         assertEquals(400, send(HttpRequest.newBuilder(uri("/mood")).GET()).statusCode());
+    }
+
+    @Test
+    void setsTheMoodPhotosShow() throws Exception {
+        List<Integer> counts = new ArrayList<>();
+        server.enablePhotoMoods(new PhotoMoods((photos, time) -> {
+            counts.add(photos.size());
+            return new PhotoReading("Kim Larsen for a quiet morning", "A cup of coffee by the window.");
+        }, moods, Clock.systemUTC()));
+
+        HttpResponse<String> read = postPhotos("""
+                {"player":"aa:bb","photos":["data:image/jpeg;base64,AQID","data:image/png;base64,BAU="]}""");
+
+        assertEquals(200, read.statusCode(), read.body());
+        JsonNode answer = JSON.readTree(read.body());
+        assertEquals("Kim Larsen for a quiet morning", answer.path("mood").path("text").asText());
+        assertEquals("Kim Larsen", answer.path("mood").path("artists").path(0).asText());
+        assertEquals("A cup of coffee by the window.", answer.path("why").asText());
+        assertEquals(List.of(2), counts);
+        assertEquals("Kim Larsen for a quiet morning", moods.current("aa:bb").orElseThrow().text());
+    }
+
+    @Test
+    void rejectsPhotoRequestsItCannotRead() throws Exception {
+        assertEquals(503, postPhotos("""
+                {"player":"p","photos":["AQID"]}""").statusCode());
+
+        server.enablePhotoMoods(new PhotoMoods((photos, time) -> new PhotoReading("calm", ""), moods, Clock.systemUTC()));
+        assertEquals(400, postPhotos("""
+                {"player":"p","photos":[]}""").statusCode());
+        assertEquals(400, postPhotos("""
+                {"photos":["AQID"]}""").statusCode());
+        assertEquals(400, postPhotos("""
+                {"player":"p","photos":["data:text/html;base64,AQID"]}""").statusCode());
+        assertEquals(400, postPhotos("not json").statusCode());
+        assertEquals(405, send(HttpRequest.newBuilder(uri("/mood/photo")).GET()).statusCode());
+    }
+
+    private HttpResponse<String> postPhotos(String body) throws Exception {
+        return send(HttpRequest.newBuilder(uri("/mood/photo"))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(body)));
     }
 
     private URI uri(String path) {

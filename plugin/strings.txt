@@ -128,3 +128,47 @@ PLUGIN_DJ_CONCERTS_POPUP
 PLUGIN_DJ_CONCERTS_MORE
 	EN	(+%s more)
 	NO	(+%s til)
+
+PLUGIN_DJ_PHOTO
+	EN	Mood from photos…
+	NO	Stemning fra bilder…
+
+PLUGIN_DJ_PHOTO_INTRO
+	EN	Show DJ the moment: take or choose up to 4 photos of where you are and what you are doing. DJ sends them to Claude (Anthropic) to read the mood, then plays music for it. The photos are not stored.
+	NO	Vis DJ øyeblikket: ta eller velg opptil 4 bilder av hvor du er og hva du gjør. DJ sender dem til Claude (Anthropic) for å lese stemningen, og spiller musikk til den. Bildene lagres ikke.
+
+PLUGIN_DJ_PHOTO_PLAYER
+	EN	Player
+	NO	Spiller
+
+PLUGIN_DJ_PHOTO_CAMERA
+	EN	Use the camera
+	NO	Bruk kameraet
+
+PLUGIN_DJ_PHOTO_SNAP
+	EN	Take photo
+	NO	Ta bilde
+
+PLUGIN_DJ_PHOTO_ADD
+	EN	Add photos
+	NO	Legg til bilder
+
+PLUGIN_DJ_PHOTO_NO_CAMERA
+	EN	Browsers only allow a webcam on secure (https) pages, so use Add photos here.
+	NO	Nettlesere tillater bare webkamera på sikre (https) sider, så bruk Legg til bilder her.
+
+PLUGIN_DJ_PHOTO_REMOVE
+	EN	Remove
+	NO	Fjern
+
+PLUGIN_DJ_PHOTO_GO
+	EN	Play this mood
+	NO	Spill denne stemningen
+
+PLUGIN_DJ_PHOTO_READING
+	EN	Reading the moment…
+	NO	Leser øyeblikket…
+
+PLUGIN_DJ_PHOTO_FAILED
+	EN	Could not read the photos. Is the DJ service running, with an Anthropic API key?
+	NO	Kunne ikke lese bildene. Kjører DJ-tjenesten, med en Anthropic API-nøkkel?

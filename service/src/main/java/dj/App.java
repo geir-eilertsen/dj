@@ -2,6 +2,7 @@ package dj;
 
 import dj.adapter.claude.ClaudeLlm;
 import dj.adapter.claude.ClaudeMoodInterpreter;
+import dj.adapter.claude.ClaudePhotoReader;
 import dj.adapter.http.MixHttpServer;
 import dj.adapter.lastfm.LastFmArtistInfo;
 import dj.adapter.lms.LmsJsonRpcClient;
@@ -19,6 +20,7 @@ import dj.adapter.folken.FolkenConcerts;
 import dj.adapter.madnesslive.MadnessLiveConcerts;
 import dj.adapter.ticketmaster.TicketmasterConcerts;
 import dj.adapter.stub.NoMoodInterpreter;
+import dj.adapter.stub.NoPhotoReader;
 import dj.adapter.stub.NoSimilarity;
 import dj.domain.ArtistEnricher;
 import dj.domain.CandidateScorer;
@@ -29,11 +31,13 @@ import dj.domain.HistoryRecorder;
 import dj.domain.MixService;
 import dj.domain.MixSettings;
 import dj.domain.MoodService;
+import dj.domain.PhotoMoods;
 import dj.domain.ScoringWeights;
 import dj.domain.SkipPenalties;
 import dj.domain.TimeOfDaySeeds;
 import dj.domain.port.LlmPort;
 import dj.domain.port.MoodInterpreter;
+import dj.domain.port.PhotoReader;
 
 import java.io.IOException;
 import java.lang.System.Logger;
@@ -154,6 +158,11 @@ public final class App {
             return status;
         });
         // A provider just turned on fills in at once rather than at the next daily scan
+        PhotoReader photoReader = config.anthropicApiKey()
+                .<PhotoReader>map(key -> new ClaudePhotoReader(key, config.llmModel(), config.llmLanguage()))
+                .orElseGet(NoPhotoReader::new);
+        // The listener's own time zone, like the time-of-day seeds
+        server.enablePhotoMoods(new PhotoMoods(photoReader, moods, Clock.systemDefaultZone()));
         server.enableConcerts(concerts, config.concertLookupTimeout(), () -> scheduler.execute(concertScan));
         server.start();
 

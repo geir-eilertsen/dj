@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>[% "PLUGIN_DJ_PHOTO" | string | html %]</title>
+<style>
+	:root { --bg: #fff; --fg: #222; --muted: #666; --line: #ccc; --accent: #1e88e5; --error: #c62828; }
+	@media (prefers-color-scheme: dark) {
+		:root { --bg: #212121; --fg: #eee; --muted: #aaa; --line: #555; --accent: #64b5f6; --error: #ef9a9a; }
+	}
+	body { margin: 0; padding: 16px; background: var(--bg); color: var(--fg); font: 16px/1.4 Roboto, system-ui, sans-serif; }
+	main { max-width: 560px; margin: 0 auto; }
+	h1 { font-size: 20px; margin: 0 0 8px; }
+	p { margin: 8px 0; }
+	.muted { color: var(--muted); font-size: 14px; }
+	.error { color: var(--error); }
+	.row { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; align-items: center; }
+	button, .button { font: inherit; padding: 8px 14px; border-radius: 4px; border: 1px solid var(--line);
+		background: transparent; color: var(--fg); cursor: pointer; }
+	button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+	button:disabled { opacity: .5; cursor: default; }
+	select { font: inherit; padding: 6px; background: var(--bg); color: var(--fg); border: 1px solid var(--line); }
+	input[type=file] { display: none; }
+	video { width: 100%; border-radius: 4px; background: #000; }
+	#photos { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+	#photos div { position: relative; }
+	#photos img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 4px; display: block; }
+	#photos button { position: absolute; top: 4px; right: 4px; padding: 0 7px; background: rgba(0,0,0,.6); color: #fff; border: 0; }
+	#result strong { display: block; font-size: 18px; margin-bottom: 4px; }
+	[hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+	<h1>[% "PLUGIN_DJ_PHOTO" | string | html %]</h1>
+	<p class="muted">[% "PLUGIN_DJ_PHOTO_INTRO" | string | html %]</p>
+
+	<div class="row" id="playerRow" hidden>
+		<label for="player">[% "PLUGIN_DJ_PHOTO_PLAYER" | string | html %]</label>
+		<select id="player"></select>
+	</div>
+
+	<div id="cameraBox" hidden>
+		<video id="video" autoplay playsinline muted></video>
+		<div class="row"><button id="snap" class="primary">[% "PLUGIN_DJ_PHOTO_SNAP" | string | html %]</button></div>
+	</div>
+
+	<div class="row">
+		<button id="camera" hidden>[% "PLUGIN_DJ_PHOTO_CAMERA" | string | html %]</button>
+		<label class="button" for="files">[% "PLUGIN_DJ_PHOTO_ADD" | string | html %]</label>
+		<input type="file" id="files" accept="image/*" multiple>
+	</div>
+	<p class="muted" id="noCamera" hidden>[% "PLUGIN_DJ_PHOTO_NO_CAMERA" | string | html %]</p>
+
+	<div id="photos"></div>
+
+	<div class="row"><button id="go" class="primary" disabled>[% "PLUGIN_DJ_PHOTO_GO" | string | html %]</button></div>
+	<p id="status" class="muted" hidden>[% "PLUGIN_DJ_PHOTO_READING" | string | html %]</p>
+	<div id="result" hidden><strong></strong><span class="muted"></span></div>
+	<p id="failed" class="error" hidden>[% "PLUGIN_DJ_PHOTO_FAILED" | string | html %]</p>
+	<span id="removeText" hidden>[% "PLUGIN_DJ_PHOTO_REMOVE" | string | html %]</span>
+	<span id="playingText" hidden>[% "PLUGIN_DJ_STARTED_MOOD" | string | html %]</span>
+</main>
+<script>
+(function () {
+	// Claude scales pictures down to about this size anyway; smaller uploads are faster
+	var MAX_SIDE = 1568, MAX_PHOTOS = 4;
+	var player = '[% player | html %]';
+	var photos = [];   // JPEG data URLs
+	var stream = null;
+	var $ = function (id) { return document.getElementById(id); };
+
+	// Without a player in the link (opened outside the DJ menu), let the listener choose one
+	if (!player) {
+		fetch('/jsonrpc.js', { method: 'POST', body: JSON.stringify({ id: 1, method: 'slim.request', params: ['', ['players', 0, 99]] }) })
+			.then(function (r) { return r.json(); })
+			.then(function (r) {
+				var select = $('player');
+				(r.result.players_loop || []).forEach(function (p) {
+					var option = document.createElement('option');
+					option.value = p.playerid;
+					option.textContent = p.name;
+					select.appendChild(option);
+				});
+				$('playerRow').hidden = false;
+			});
+	}
+
+	// Browsers only offer a webcam on https pages (and localhost); phones still get their camera through Add photos
+	if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.isSecureContext) {
+		$('camera').hidden = false;
+	} else if (!/Android|iPhone|iPad/i.test(navigator.userAgent)) {
+		$('noCamera').hidden = false;
+	}
+
+	$('camera').onclick = function () {
+		navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1920 } }, audio: false }).then(function (s) {
+			stream = s;
+			$('video').srcObject = s;
+			$('cameraBox').hidden = false;
+			$('camera').hidden = true;
+		}).catch(function () {
+			$('camera').hidden = true;
+			$('noCamera').hidden = false;
+		});
+	};
+
+	$('snap').onclick = function () {
+		var video = $('video');
+		add(scaled(video, video.videoWidth, video.videoHeight));
+	};
+
+	$('files').onchange = function () {
+		Array.prototype.slice.call(this.files).forEach(function (file) {
+			var url = URL.createObjectURL(file);
+			var img = new Image();
+			img.onload = function () {
+				add(scaled(img, img.naturalWidth, img.naturalHeight));
+				URL.revokeObjectURL(url);
+			};
+			img.src = url;
+		});
+		this.value = '';
+	};
+
+	function scaled(source, width, height) {
+		var factor = Math.min(1, MAX_SIDE / Math.max(width, height));
+		var canvas = document.createElement('canvas');
+		canvas.width = Math.round(width * factor);
+		canvas.height = Math.round(height * factor);
+		canvas.getContext('2d').drawImage(source, 0, 0, canvas.width, canvas.height);
+		return canvas.toDataURL('image/jpeg', 0.85);
+	}
+
+	function add(dataUrl) {
+		if (photos.length < MAX_PHOTOS) {
+			photos.push(dataUrl);
+			show();
+		}
+	}
+
+	function show() {
+		var box = $('photos');
+		box.innerHTML = '';
+		photos.forEach(function (dataUrl, i) {
+			var div = document.createElement('div');
+			var img = document.createElement('img');
+			img.src = dataUrl;
+			var remove = document.createElement('button');
+			remove.textContent = '×';
+			remove.title = $('removeText').textContent;
+			remove.onclick = function () { photos.splice(i, 1); show(); };
+			div.appendChild(img);
+			div.appendChild(remove);
+			box.appendChild(div);
+		});
+		$('go').disabled = photos.length === 0;
+		$('snap').disabled = photos.length >= MAX_PHOTOS;
+	}
+
+	function stopCamera() {
+		if (stream) {
+			stream.getTracks().forEach(function (t) { t.stop(); });
+			stream = null;
+			$('cameraBox').hidden = true;
+			$('camera').hidden = false;
+		}
+	}
+	window.addEventListener('pagehide', stopCamera);
+
+	$('go').onclick = function () {
+		stopCamera();
+		$('go').disabled = true;
+		$('status').hidden = false;
+		$('result').hidden = true;
+		$('failed').hidden = true;
+		fetch('/plugins/DJ/photomood', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ player: player || $('player').value, photos: photos })
+		}).then(function (r) { return r.json(); }).then(function (answer) {
+			if (answer.error) {
+				throw new Error(answer.error);
+			}
+			$('result').querySelector('strong').textContent = $('playingText').textContent.replace('%s', answer.text);
+			$('result').querySelector('span').textContent = answer.why || '';
+			$('result').hidden = false;
+			photos = [];
+			show();
+		}).catch(function (e) {
+			$('failed').hidden = false;
+			$('go').disabled = photos.length === 0;
+		}).then(function () {
+			$('status').hidden = true;
+		});
+	};
+})();
+</script>
+</body>
+</html>

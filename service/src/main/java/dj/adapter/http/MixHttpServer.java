@@ -1,6 +1,7 @@
 package dj.adapter.http;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
@@ -8,11 +9,13 @@ import dj.domain.ConcertFinder;
 import dj.domain.ConcertProviders;
 import dj.domain.MixService;
 import dj.domain.MoodService;
+import dj.domain.PhotoMoods;
 import dj.domain.model.ArtistConcerts;
 import dj.domain.model.Concert;
 import dj.domain.model.Mix;
 import dj.domain.model.MixRequest;
 import dj.domain.model.Mood;
+import dj.domain.model.Photo;
 import dj.domain.model.Track;
 import dj.domain.model.TrackId;
 import dj.domain.port.FeedbackStore;
@@ -28,6 +31,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -51,6 +55,8 @@ import java.util.function.Supplier;
  *   <li>{@code POST /mood} with {@code player} and {@code text} (query or form body): sets the mood</li>
  *   <li>{@code POST /mood/clear?player=<id>}</li>
  *   <li>{@code POST /mood/forget} with {@code player} and {@code text}: takes it off the recent moods</li>
+ *   <li>{@code POST /mood/photo} with JSON {@code {"player", "photos": ["data:image/jpeg;base64,...", ...]}}:
+ *       sets the mood the photos show; answers {@code {"mood", "why"}}</li>
  *   <li>{@code GET /why?player=<id>&url=<track url>}: why DJ suggested that track to that player</li>
  *   <li>{@code GET /concerts?artist=<name>}: that artist's upcoming concerts in the chosen countries (looked up if need be)</li>
  *   <li>{@code GET /concerts}: every known artist with upcoming concerts in the chosen countries</li>
@@ -67,6 +73,9 @@ public class MixHttpServer {
     private static final ObjectMapper JSON = new ObjectMapper();
     static final int DEFAULT_COUNT = 5;
     private static final int MAX_FORM_BYTES = 16 * 1024;
+    /** Claude takes pictures of up to 5 MB; the plugin's page sends them scaled down. */
+    private static final int MAX_PHOTO_BYTES = 5 * 1024 * 1024;
+    private static final int MAX_PHOTO_REQUEST_BYTES = PhotoMoods.MAX_PHOTOS * MAX_PHOTO_BYTES * 4 / 3 + 16 * 1024;
 
     private final HttpServer server;
     private final MixService mixService;
@@ -76,6 +85,7 @@ public class MixHttpServer {
     private volatile ConcertFinder concerts;
     private volatile Duration concertLookupTimeout;
     private volatile Runnable onProvidersChanged;
+    private volatile PhotoMoods photoMoods;
 
     public MixHttpServer(MixService mixService, FeedbackStore feedback, MoodService moods, int port,
                          Supplier<Map<String, Object>> status) throws IOException {
@@ -89,6 +99,7 @@ public class MixHttpServer {
         server.createContext("/mood", this::handleMood);
         server.createContext("/mood/clear", this::handleClearMood);
         server.createContext("/mood/forget", this::handleForgetMood);
+        server.createContext("/mood/photo", this::handlePhotoMood);
         server.createContext("/concerts", this::handleConcerts);
         server.createContext("/concerts/providers", this::handleConcertProviders);
         server.createContext("/health", exchange -> respond(exchange, 200, Map.of("status", "ok")));
@@ -104,6 +115,11 @@ public class MixHttpServer {
         this.concertLookupTimeout = lookupTimeout;
         this.onProvidersChanged = onProvidersChanged;
         this.concerts = finder;
+    }
+
+    /** Answers {@code /mood/photo}; without this, or without a photo reader, it says photos can't be read. */
+    public void enablePhotoMoods(PhotoMoods photoMoods) {
+        this.photoMoods = photoMoods;
     }
 
     public void start() {
@@ -307,6 +323,71 @@ public class MixHttpServer {
             LOG.log(Level.ERROR, "Could not forget mood", e);
             respond(exchange, 500, Map.of("error", "internal error"));
         }
+    }
+
+    private void handlePhotoMood(HttpExchange exchange) throws IOException {
+        if (!"POST".equals(exchange.getRequestMethod())) {
+            respond(exchange, 405, Map.of("error", "POST only"));
+            return;
+        }
+        PhotoMoods reader = photoMoods;
+        if (reader == null || !reader.available()) {
+            respond(exchange, 503, Map.of("error", "reading photos needs ANTHROPIC_API_KEY"));
+            return;
+        }
+        byte[] body = exchange.getRequestBody().readNBytes(MAX_PHOTO_REQUEST_BYTES + 1);
+        if (body.length > MAX_PHOTO_REQUEST_BYTES) {
+            respond(exchange, 413, Map.of("error", "photos too large"));
+            return;
+        }
+        String player;
+        List<Photo> photos = new ArrayList<>();
+        try {
+            JsonNode request = JSON.readTree(body);
+            player = request.path("player").asText("");
+            for (JsonNode photo : request.path("photos")) {
+                photos.add(photo(photo.asText("")));
+            }
+        } catch (IOException | IllegalArgumentException e) {
+            respond(exchange, 400, Map.of("error", "expected {\"player\", \"photos\": [data URLs]}: " + e.getMessage()));
+            return;
+        }
+        if (player.isBlank()) {
+            respond(exchange, 400, Map.of("error", "missing 'player'"));
+            return;
+        }
+        try {
+            PhotoMoods.Result result = reader.fromPhotos(player, photos);
+            Map<String, Object> answer = new LinkedHashMap<>();
+            answer.put("mood", MoodJson.from(result.mood()));
+            answer.put("why", result.why());
+            respond(exchange, 200, answer);
+        } catch (IllegalArgumentException e) {
+            respond(exchange, 400, Map.of("error", e.getMessage()));
+        } catch (RuntimeException e) {
+            // Never log the request: it holds the listener's photos
+            LOG.log(Level.WARNING, "Could not read the mood from photos: {0}", e.toString());
+            respond(exchange, 502, Map.of("error", "could not read the photos"));
+        }
+    }
+
+    /** A data URL ({@code data:image/jpeg;base64,...}), or bare base64 taken as a JPEG. */
+    static Photo photo(String dataUrl) {
+        String type = "image/jpeg";
+        String data = dataUrl;
+        if (dataUrl.startsWith("data:")) {
+            int comma = dataUrl.indexOf(',');
+            if (comma < 0 || !dataUrl.substring(0, comma).endsWith(";base64")) {
+                throw new IllegalArgumentException("photos must be base64 data URLs");
+            }
+            type = dataUrl.substring(5, comma - ";base64".length());
+            data = dataUrl.substring(comma + 1);
+        }
+        byte[] bytes = Base64.getMimeDecoder().decode(data);
+        if (bytes.length > MAX_PHOTO_BYTES) {
+            throw new IllegalArgumentException("a photo is larger than 5 MB");
+        }
+        return new Photo(bytes, type);
     }
 
     /** Query parameters, plus those of a form-encoded body. */

@@ -7,6 +7,8 @@ package Plugins::DJ::Plugin;
 #   queue with a fresh mix and hands over to DSTM to keep it going, and "Play a mood...", which
 #   does the same for a request in the listener's own words ("mellow prog for Sunday morning").
 #   The mood keeps steering DJ's suggestions until it's cleared, Start DJ is used, or 4 hours pass.
+#   "Mood from photos..." opens a page where the listener takes or picks photos of the moment;
+#   the service reads a mood from them and it is played like a typed one.
 # - It shows upcoming concerts (from the sources ticked in the settings) in the listener's region by the
 #   artist that's playing (track info, and a pop-up in Material Skin), and lists every concert by the
 #   artists the listener plays ("Upcoming concerts").
@@ -43,6 +45,8 @@ use constant CONCERT_FAIL_TTL => 600;
 # An artist's concerts pop up at most this often per player, not for every song of an album
 use constant CONCERT_POPUP_EVERY => 3600 * 12;
 use constant POPUP_CONCERTS   => 3;
+# Reading photos takes Claude a few seconds per picture, on top of understanding the mood
+use constant PHOTO_TIMEOUT    => 45;
 
 my $log = Slim::Utils::Log->addLogCategory({
 	'category'     => 'plugin.dj',
@@ -82,6 +86,12 @@ sub initPlugin {
 	if (main::WEBUI) {
 		require Plugins::DJ::Settings;
 		Plugins::DJ::Settings->new();
+
+		Slim::Web::Pages->addPageFunction('plugins/DJ/photo.html', sub {
+			my ($client, $params) = @_;
+			return Slim::Web::HTTP::filltemplatefile('plugins/DJ/photo.html', $params);
+		});
+		Slim::Web::Pages->addRawFunction('plugins/DJ/photomood', \&handlePhotoMood);
 	}
 
 	# Shows in the track info of the playing song (Material: Now Playing, ⋮ More)
@@ -149,6 +159,11 @@ sub handleFeed {
 		name => cstring($client, 'PLUGIN_DJ_CONCERTS'),
 		type => 'link',
 		url  => \&upcomingConcerts,
+	},{
+		# Material opens it in a dialog; the page posts the photos to handlePhotoMood
+		name    => cstring($client, 'PLUGIN_DJ_PHOTO'),
+		type    => 'text',
+		weblink => '/plugins/DJ/photo.html' . ($client ? '?player=' . uri_escape_utf8($client->master->id) : ''),
 	});
 
 	my $player = $client ? $client->master->id : '';
@@ -446,10 +461,25 @@ sub forgetMood {
 sub _playMix {
 	my ($client, $cb, $tracks, $startedText) = @_;
 
-	if (!@$tracks) {
+	if (!_startMix($client, $tracks)) {
 		$cb->({ items => [{ name => cstring($client, 'PLUGIN_DJ_START_FAILED'), type => 'text' }] });
 		return;
 	}
+
+	$cb->({
+		items => [{
+			name        => $startedText,
+			type        => 'text',
+			showBriefly => 1,
+		}],
+	});
+}
+
+# Plays $tracks instead of the queue, with DJ as the player's DSTM mixer. False if there are none.
+sub _startMix {
+	my ($client, $tracks) = @_;
+
+	return 0 unless @$tracks;
 
 	# LMS's own random mix would keep DSTM from calling us; a no-op if it isn't active
 	if ( Slim::Utils::PluginManager->isEnabled('Slim::Plugin::RandomPlay::Plugin') ) {
@@ -462,13 +492,67 @@ sub _playMix {
 		preferences('plugin.dontstopthemusic')->client($client)->set('provider', DSTM_HANDLER);
 	}
 
-	$cb->({
-		items => [{
-			name        => $startedText,
-			type        => 'text',
-			showBriefly => 1,
-		}],
-	});
+	return 1;
+}
+
+# POST from the photo page: {"player", "photos": [JPEG data URLs]}. The service reads the mood
+# and sets it; then a fresh mix for it starts like "Play a mood...". Answers {"text", "why"}
+# or {"error"}. The photos are passed on as they came and never kept or logged.
+sub handlePhotoMood {
+	my ($httpClient, $response) = @_;
+
+	my $reply = sub {
+		my ($code, $result) = @_;
+		my $content = to_json($result);
+		$response->code($code);
+		$response->content_type('application/json');
+		$response->header('Content-Length' => length($content));
+		$response->header('Connection' => 'close');
+		Slim::Web::HTTP::addHTTPResponse($httpClient, $response, \$content);
+	};
+
+	my $request = $response->request;
+	if ($request->method ne 'POST') {
+		return $reply->(405, { error => 'POST only' });
+	}
+
+	my $body = $request->content;
+	my $playerId = eval { from_json($body)->{player} };
+	my $client = $playerId && Slim::Player::Client::getClient($playerId);
+	if (!$client) {
+		return $reply->(400, { error => cstring(undef, 'PLUGIN_DJ_NO_PLAYER') });
+	}
+	$client = $client->master;
+
+	my $base = $prefs->get('service_url');
+	$base =~ s{/+$}{};
+
+	Slim::Networking::SimpleAsyncHTTP->new(
+		sub {
+			my $answer = eval { from_json(shift->content) };
+			my $mood = ref $answer eq 'HASH' && $answer->{mood};
+			if (!$mood || !$mood->{text}) {
+				$log->error("Invalid response from dj service for photos: $@");
+				return $reply->(502, { error => cstring($client, 'PLUGIN_DJ_PHOTO_FAILED') });
+			}
+			_requestMix($client, [], NUM_START_TRACKS, sub {
+				if (_startMix($client, shift)) {
+					$reply->(200, { text => $mood->{text}, why => $answer->{why} || '' });
+				}
+				else {
+					$reply->(502, { error => cstring($client, 'PLUGIN_DJ_START_FAILED') });
+				}
+			}, 1);
+		},
+		sub {
+			my ($http, $error) = @_;
+			$log->warn("dj service could not read the photos: $error");
+			$reply->(502, { error => cstring($client, 'PLUGIN_DJ_PHOTO_FAILED') });
+		},
+		{
+			timeout => PHOTO_TIMEOUT,
+		},
+	)->post($base . '/mood/photo', 'Content-Type' => 'application/json', $body);
 }
 
 # Called by DSTM when the queue is about to run out. $cb MUST be called exactly once on every
