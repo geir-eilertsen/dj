@@ -23,6 +23,9 @@
 	select { font: inherit; padding: 6px; background: var(--bg); color: var(--fg); border: 1px solid var(--line); }
 	input[type=file] { display: none; }
 	video { width: 100%; border-radius: 4px; background: #000; }
+	video.mirrored { transform: scaleX(-1); }
+	.controls label { display: flex; align-items: center; gap: 6px; }
+	input[type=range] { width: 140px; }
 	#photos { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
 	#photos div { position: relative; }
 	#photos img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 4px; display: block; }
@@ -43,7 +46,14 @@
 
 	<div id="cameraBox" hidden>
 		<video id="video" autoplay playsinline muted></video>
-		<div class="row"><button id="snap" class="primary">[% "PLUGIN_DJ_PHOTO_SNAP" | string | html %]</button></div>
+		<div class="row controls">
+			<button id="snap" class="primary">[% "PLUGIN_DJ_PHOTO_SNAP" | string | html %]</button>
+			<button id="switch" hidden>[% "PLUGIN_DJ_PHOTO_SWITCH" | string | html %]</button>
+			<select id="cameras" hidden aria-label="[% "PLUGIN_DJ_PHOTO_CHOOSE_CAMERA" | string | html %]"></select>
+			<label id="zoomBox" hidden>[% "PLUGIN_DJ_PHOTO_ZOOM" | string | html %] <input type="range" id="zoom"></label>
+			<label id="torchBox" hidden><input type="checkbox" id="torch"> [% "PLUGIN_DJ_PHOTO_LIGHT" | string | html %]</label>
+			<button id="closeCamera">[% "PLUGIN_DJ_PHOTO_CLOSE_CAMERA" | string | html %]</button>
+		</div>
 	</div>
 
 	<div class="row">
@@ -94,17 +104,101 @@
 		$('noCamera').hidden = false;
 	}
 
-	$('camera').onclick = function () {
-		navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1920 } }, audio: false }).then(function (s) {
+	// The chosen camera is remembered per browser; phones start with the back camera, which shows the scene
+	var CAMERA_KEY = 'dj.photo.camera';
+	var cameras = [];
+
+	function remembered() {
+		try { return localStorage.getItem(CAMERA_KEY) || ''; } catch (e) { return ''; }
+	}
+
+	function remember(id) {
+		try { localStorage.setItem(CAMERA_KEY, id); } catch (e) {}
+	}
+
+	function openCamera(deviceId) {
+		stopStream();
+		var video = deviceId
+			? { deviceId: { exact: deviceId }, width: { ideal: 1920 } }
+			: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 } };
+		return navigator.mediaDevices.getUserMedia({ video: video, audio: false }).then(function (s) {
 			stream = s;
+			var track = s.getVideoTracks()[0];
+			var settings = track.getSettings ? track.getSettings() : {};
 			$('video').srcObject = s;
+			// A selfie preview reads more naturally mirrored; the photo itself is not
+			$('video').classList.toggle('mirrored', settings.facingMode === 'user');
 			$('cameraBox').hidden = false;
 			$('camera').hidden = true;
-		}).catch(function () {
-			$('camera').hidden = true;
-			$('noCamera').hidden = false;
+			showControls(track);
+			return listCameras(settings.deviceId);
 		});
+	}
+
+	// Device names are only known once the camera is allowed
+	function listCameras(currentId) {
+		return navigator.mediaDevices.enumerateDevices().then(function (devices) {
+			cameras = devices.filter(function (d) { return d.kind === 'videoinput'; });
+			var select = $('cameras');
+			select.innerHTML = '';
+			cameras.forEach(function (d, i) {
+				var option = document.createElement('option');
+				option.value = d.deviceId;
+				option.textContent = d.label || ('Camera ' + (i + 1));
+				option.selected = d.deviceId === currentId;
+				select.appendChild(option);
+			});
+			select.hidden = cameras.length < 2;
+			$('switch').hidden = cameras.length < 2;
+		});
+	}
+
+	function showControls(track) {
+		var caps = track.getCapabilities ? track.getCapabilities() : {};
+		var settings = track.getSettings ? track.getSettings() : {};
+		var zoom = $('zoom');
+		$('zoomBox').hidden = !caps.zoom;
+		if (caps.zoom) {
+			zoom.min = caps.zoom.min;
+			zoom.max = caps.zoom.max;
+			zoom.step = caps.zoom.step || 0.1;
+			zoom.value = settings.zoom || caps.zoom.min;
+			zoom.oninput = function () { track.applyConstraints({ advanced: [{ zoom: Number(zoom.value) }] }).catch(function () {}); };
+		}
+		$('torchBox').hidden = !caps.torch;
+		$('torch').checked = false;
+		$('torch').onchange = function () {
+			track.applyConstraints({ advanced: [{ torch: $('torch').checked }] }).catch(function () {});
+		};
+	}
+
+	function cameraFailed() {
+		stopCamera();
+		$('camera').hidden = true;
+		$('noCamera').hidden = false;
+	}
+
+	$('camera').onclick = function () {
+		// A remembered camera may be gone (unplugged webcam): fall back to the default one
+		openCamera(remembered()).catch(function () {
+			return openCamera('');
+		}).catch(cameraFailed);
 	};
+
+	$('cameras').onchange = function () {
+		remember(this.value);
+		openCamera(this.value).catch(cameraFailed);
+	};
+
+	$('switch').onclick = function () {
+		var current = stream && stream.getVideoTracks()[0].getSettings().deviceId;
+		var i = cameras.findIndex(function (d) { return d.deviceId === current; });
+		var next = cameras[(i + 1) % cameras.length];
+		remember(next.deviceId);
+		openCamera(next.deviceId).catch(cameraFailed);
+	};
+
+	$('closeCamera').onclick = function () { stopCamera(); };
 
 	$('snap').onclick = function () {
 		var video = $('video');
@@ -148,7 +242,8 @@
 			var img = document.createElement('img');
 			img.src = dataUrl;
 			var remove = document.createElement('button');
-			remove.textContent = '×';
+			// Only ASCII in this template: LMS would encode other characters twice
+			remove.textContent = '\u00d7';
 			remove.title = $('removeText').textContent;
 			remove.onclick = function () { photos.splice(i, 1); show(); };
 			div.appendChild(img);
@@ -159,13 +254,17 @@
 		$('snap').disabled = photos.length >= MAX_PHOTOS;
 	}
 
-	function stopCamera() {
+	function stopStream() {
 		if (stream) {
 			stream.getTracks().forEach(function (t) { t.stop(); });
 			stream = null;
-			$('cameraBox').hidden = true;
-			$('camera').hidden = false;
 		}
+	}
+
+	function stopCamera() {
+		stopStream();
+		$('cameraBox').hidden = true;
+		$('camera').hidden = !(navigator.mediaDevices && window.isSecureContext);
 	}
 	window.addEventListener('pagehide', stopCamera);
 

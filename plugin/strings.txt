@@ -172,3 +172,23 @@ PLUGIN_DJ_PHOTO_READING
 PLUGIN_DJ_PHOTO_FAILED
 	EN	Could not read the photos. Is the DJ service running, with an Anthropic API key?
 	NO	Kunne ikke lese bildene. Kjører DJ-tjenesten, med en Anthropic API-nøkkel?
+
+PLUGIN_DJ_PHOTO_SWITCH
+	EN	Switch camera
+	NO	Bytt kamera
+
+PLUGIN_DJ_PHOTO_CHOOSE_CAMERA
+	EN	Camera
+	NO	Kamera
+
+PLUGIN_DJ_PHOTO_ZOOM
+	EN	Zoom
+	NO	Zoom
+
+PLUGIN_DJ_PHOTO_LIGHT
+	EN	Light
+	NO	Lys
+
+PLUGIN_DJ_PHOTO_CLOSE_CAMERA
+	EN	Close camera
+	NO	Lukk kamera
