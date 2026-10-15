@@ -40,8 +40,8 @@ cat > repo.xml <<XML
 		<plugin name="DJ" version="$version" minTarget="8.0" maxTarget="*">
 			<title lang="EN">DJ (AI suggestions)</title>
 			<title lang="NO">DJ (AI-forslag)</title>
-			<desc lang="EN">An AI DJ: Start DJ, moods in your own words ("mellow prog for Sunday morning") and Don't Stop The Music mixes that follow what you play, with a reason for every song, plus upcoming concerts by the artists you play. Note: not a click-and-done plugin. It needs the separate DJ service running in Docker (image geireilertsen/dj), and works best with free Last.fm and paid Anthropic (about $0.0005 a mix) API keys. Setup: see the link.</desc>
-			<desc lang="NO">En AI-DJ: Start DJ, stemninger med egne ord og Ikke stopp musikken-mikser som følger det du spiller, med en begrunnelse for hver låt, og kommende konserter med artistene du spiller. Merk: krever den separate DJ-tjenesten i Docker (bildet geireilertsen/dj), og virker best med API-nøkler fra Last.fm (gratis) og Anthropic (ca. $0.0005 per miks). Oppsett: se lenken.</desc>
+			<desc lang="EN">An AI DJ: Start DJ, moods in your own words ("mellow prog for Sunday morning") or read from photos of the moment and Don't Stop The Music mixes that follow what you play, with a reason for every song, plus upcoming concerts by the artists you play. Note: not a click-and-done plugin. It needs the separate DJ service running in Docker (image geireilertsen/dj), and works best with free Last.fm and paid Anthropic (about $0.0005 a mix) API keys. Setup: see the link.</desc>
+			<desc lang="NO">En AI-DJ: Start DJ, stemninger med egne ord eller lest fra bilder av øyeblikket, og Ikke stopp musikken-mikser som følger det du spiller, med en begrunnelse for hver låt, og kommende konserter med artistene du spiller. Merk: krever den separate DJ-tjenesten i Docker (bildet geireilertsen/dj), og virker best med API-nøkler fra Last.fm (gratis) og Anthropic (ca. $0.0005 per miks). Oppsett: se lenken.</desc>
 			<creator>Geir Eilertsen</creator>
 			<category>playlists</category>
 			<link>https://github.com/$repo</link>
